@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sudo chown:*)",
+      "Bash(PUPPETEER_CACHE_DIR=/tmp/puppeteer-cache npm install:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo run:*)"
+    ]
+  }
+}
