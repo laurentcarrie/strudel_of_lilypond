@@ -245,7 +245,7 @@ impl StrudelGenerator {
 
         if let Some(t) = tempo {
             let cpm = t.bpm as f64 / t.beat_unit as f64;
-            format!("{}\n  .cpm({})", base, cpm)
+            format!("{base}\n  .cpm({cpm})")
         } else {
             base
         }
@@ -258,7 +258,7 @@ impl StrudelGenerator {
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>{}</title>
+  <title>{title}</title>
   <script src="https://unpkg.com/@strudel/embed@latest"></script>
   <style>
     html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; }}
@@ -269,12 +269,11 @@ impl StrudelGenerator {
 <body>
   <strudel-repl>
 <!--
-{}
+{pattern}
 -->
   </strudel-repl>
 </body>
-</html>"#,
-            title, pattern
+</html>"#
         )
     }
 }
