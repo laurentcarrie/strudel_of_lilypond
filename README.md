@@ -70,11 +70,13 @@ Add special comments inside a staff or voice to control Strudel output:
 
 - `% @strudel-of-lilypond@ <color> punchcard` - Enable punchcard visualization with color
 - `% @strudel-of-lilypond@ gain <value>` - Set gain/volume
+- `% @strudel-of-lilypond@ pan <value>` - Set stereo panning (0 = left, 0.5 = center, 1 = right)
 
 ```lilypond
 \new TabStaff {
   % @strudel-of-lilypond@ red punchcard
   % @strudel-of-lilypond@ gain 2
+  % @strudel-of-lilypond@ pan 0.25
   \voicea
 }
 
@@ -96,6 +98,7 @@ This generates Strudel code with the specified modifiers:
 ```javascript
 $: note("c4 d4 e4")
 .gain(2)
+.pan(0.25)
 .color("red")
 ._punchcard()
   .s("piano")

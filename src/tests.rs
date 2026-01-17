@@ -232,6 +232,7 @@ fn test_generate_drum_staff() {
         ],
         punchcard_color: None,
         gain: None,
+        pan: None,
     }];
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
@@ -280,11 +281,13 @@ fn test_generate_multi_voice_drum_staff() {
             events: vec![DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 })],
             punchcard_color: None,
             gain: None,
+            pan: None,
         },
         DrumVoiceData {
             events: vec![DrumEvent::Hit(DrumHit { name: "hh".to_string(), duration: 8 })],
             punchcard_color: None,
             gain: None,
+            pan: None,
         },
     ];
 
@@ -330,6 +333,7 @@ fn test_generate_mixed_staves() {
             events: vec![DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 })],
             punchcard_color: None,
             gain: None,
+            pan: None,
         }]),
     ];
 
@@ -409,5 +413,29 @@ fn test_bar_line_parsed() {
     let strudel = StrudelGenerator::generate_pitched_staff(events, None);
     // Bar lines are skipped in output
     assert!(strudel.contains("c4 d4 e4 f4"));
+}
+
+#[test]
+fn test_pan_modifier() {
+    let parser = LilyPondParser::new();
+    let code = r#"
+voice = { c'4 d'4 }
+
+\score {
+  <<
+    \new Staff {
+      % @strudel-of-lilypond@ pan 0.25
+      \voice
+    }
+  >>
+}
+"#;
+    let result = parser.parse(code).unwrap();
+
+    assert_eq!(result.staves.len(), 1);
+    assert_eq!(result.staves[0].pan, Some("0.25".to_string()));
+
+    let strudel = StrudelGenerator::generate_staff(&result.staves[0], None);
+    assert!(strudel.contains(".pan(0.25)"));
 }
 
