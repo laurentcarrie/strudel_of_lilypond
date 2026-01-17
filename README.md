@@ -1,9 +1,20 @@
-
-# Project Overview
+# strudel-of-lilypond
 
 A Rust tool that converts LilyPond music notation to Strudel live coding patterns. LilyPond is a music engraving program that uses text-based notation; Strudel is a JavaScript library for live coding music.
 
-# Build and Test Commands
+## Installation
+
+```bash
+cargo install strudel-of-lilypond
+```
+
+## Usage
+
+```bash
+strudel-of-lilypond input.ly    # Creates input.html with embedded Strudel REPL
+```
+
+## Build from Source
 
 ```bash
 cargo build          # Build the project
@@ -12,18 +23,18 @@ cargo test           # Run all tests
 cargo test <name>    # Run a specific test (e.g., cargo test test_parse_simple_notes)
 ```
 
-# Architecture
+## Architecture
 
 The codebase is a Rust library (`src/lib.rs`) with a CLI frontend (`src/main.rs`).
 
-## Data Structures
+### Data Structures
 
 - **`Note`** - Pitched note with name, octave, accidental, duration, and MIDI number
 - **`DrumHit`** - Drum sound with name (bd, hh, sn, etc.) and duration
 - **`Staff`** - Either pitched (`Vec<Note>`) or drums (`Vec<Vec<DrumHit>>` for simultaneous voices)
 - **`Tempo`** - Beat unit and BPM from `\tempo` markings
 
-## LilyPondParser
+### LilyPondParser
 
 Parses LilyPond notation with support for:
 - Variable definitions (`voice = { ... }`)
@@ -34,7 +45,7 @@ Parses LilyPond notation with support for:
 - Repeat expansion (`\repeat unfold/percent N { ... }`)
 - Notes with accidentals (`is`/`es`), octave markers (`'`/`,`), and durations
 
-## StrudelGenerator
+### StrudelGenerator
 
 Generates Strudel patterns:
 - `generate_pitched_staff()` - `note("c4 d4 e4").s("piano")`
@@ -42,7 +53,7 @@ Generates Strudel patterns:
 - `generate_multi()` - Multiple `$:` patterns for simultaneous staves
 - `generate_html()` - HTML page with embedded Strudel REPL
 
-# LilyPond Notation Quick Reference
+## LilyPond Notation Quick Reference
 
 - Note names: `c d e f g a b`
 - Accidentals: `is` (sharp), `es` (flat) - e.g., `cis` = C#, `des` = Db
