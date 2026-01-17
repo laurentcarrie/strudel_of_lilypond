@@ -8,6 +8,10 @@ repository = "https://github.com/laurentcarrie/strudel_of_lilypond"
 keywords = ["lilypond", "strudel", "music", "notation", "live-coding"]
 categories = ["multimedia::audio", "parser-implementations"]
 
+[[bin]]
+name = "strudel-of-lilypond"
+path = "src/main.rs"
+
 [dependencies]
 regex = "1"
 

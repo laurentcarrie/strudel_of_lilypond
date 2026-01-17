@@ -19,6 +19,28 @@ pub struct DrumHit {
 }
 
 #[derive(Debug, Clone)]
+pub enum PitchedEvent {
+    Note(Note),
+    BarLine,
+    RepeatStart(u32),
+    RepeatEnd,
+}
+
+#[derive(Debug, Clone)]
+pub enum DrumEvent {
+    Hit(DrumHit),
+    BarLine,
+    RepeatStart(u32),
+    RepeatEnd,
+}
+
+#[derive(Debug, Clone)]
+pub struct DrumVoiceData {
+    pub events: Vec<DrumEvent>,
+    pub punchcard_color: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Tempo {
     pub beat_unit: u32,
     pub bpm: u32,
@@ -32,40 +54,51 @@ pub enum StaffKind {
 
 #[derive(Debug, Clone)]
 pub enum StaffContent {
-    Notes(Vec<Note>),
-    /// Multiple drum voices that play simultaneously (each Vec<DrumHit> is one voice)
-    Drums(Vec<Vec<DrumHit>>),
+    Notes(Vec<PitchedEvent>),
+    /// Multiple drum voices that play simultaneously
+    Drums(Vec<DrumVoiceData>),
 }
 
 #[derive(Debug, Clone)]
 pub struct Staff {
     pub kind: StaffKind,
     pub content: StaffContent,
+    pub punchcard_color: Option<String>,
 }
 
 impl Staff {
-    pub fn new_pitched(notes: Vec<Note>) -> Self {
+    pub fn new_pitched(events: Vec<PitchedEvent>) -> Self {
         Staff {
             kind: StaffKind::Pitched,
-            content: StaffContent::Notes(notes),
+            content: StaffContent::Notes(events),
+            punchcard_color: None,
         }
     }
 
-    pub fn new_drums(voices: Vec<Vec<DrumHit>>) -> Self {
+    pub fn new_pitched_with_punchcard(events: Vec<PitchedEvent>, color: String) -> Self {
+        Staff {
+            kind: StaffKind::Pitched,
+            content: StaffContent::Notes(events),
+            punchcard_color: Some(color),
+        }
+    }
+
+    pub fn new_drums(voices: Vec<DrumVoiceData>) -> Self {
         Staff {
             kind: StaffKind::Drums,
             content: StaffContent::Drums(voices),
+            punchcard_color: None,
         }
     }
 
-    pub fn notes(&self) -> Option<&Vec<Note>> {
+    pub fn events(&self) -> Option<&Vec<PitchedEvent>> {
         match &self.content {
-            StaffContent::Notes(notes) => Some(notes),
+            StaffContent::Notes(events) => Some(events),
             _ => None,
         }
     }
 
-    pub fn drums(&self) -> Option<&Vec<Vec<DrumHit>>> {
+    pub fn drum_voices(&self) -> Option<&Vec<DrumVoiceData>> {
         match &self.content {
             StaffContent::Drums(voices) => Some(voices),
             _ => None,
@@ -80,12 +113,17 @@ pub struct ParseResult {
 }
 
 impl ParseResult {
-    /// For backwards compatibility: returns all notes flattened
+    /// For backwards compatibility: returns all notes flattened (excluding bar lines and repeats)
     pub fn notes(&self) -> Vec<Note> {
         self.staves
             .iter()
-            .filter_map(|s| s.notes())
-            .flat_map(|n| n.clone())
+            .filter_map(|s| s.events())
+            .flat_map(|events| {
+                events.iter().filter_map(|e| match e {
+                    PitchedEvent::Note(n) => Some(n.clone()),
+                    _ => None,
+                })
+            })
             .collect()
     }
 }
@@ -117,29 +155,29 @@ impl LilyPondParser {
     pub fn parse(&self, code: &str) -> Result<ParseResult, String> {
         let tempo = self.parse_tempo(code);
         let variables = self.parse_variables(code);
-        let expanded = self.expand_repeats(code);
-        let variables_expanded: HashMap<String, VariableKind> = variables
+        let marked = self.mark_repeats(code);
+        let variables_marked: HashMap<String, VariableKind> = variables
             .into_iter()
             .map(|(k, v)| {
-                let expanded_content = self.expand_repeats(match &v {
+                let marked_content = self.mark_repeats(match &v {
                     VariableKind::Pitched(s) => s,
                     VariableKind::Drums(s) => s,
                 });
                 let new_v = match v {
-                    VariableKind::Pitched(_) => VariableKind::Pitched(expanded_content),
-                    VariableKind::Drums(_) => VariableKind::Drums(expanded_content),
+                    VariableKind::Pitched(_) => VariableKind::Pitched(marked_content),
+                    VariableKind::Drums(_) => VariableKind::Drums(marked_content),
                 };
                 (k, new_v)
             })
             .collect();
 
         // Try to parse score with staves first
-        if let Some(staves) = self.parse_score_staves(&expanded, &variables_expanded)? {
+        if let Some(staves) = self.parse_score_staves(&marked, &variables_marked)? {
             return Ok(ParseResult { staves, tempo });
         }
 
         // Fallback: parse as single staff
-        let notes_section = self.extract_notes_section(&expanded)?;
+        let notes_section = self.extract_notes_section(&marked)?;
         let notes = self.parse_notes_from_section(&notes_section)?;
 
         Ok(ParseResult {
@@ -175,6 +213,12 @@ impl LilyPondParser {
         }
 
         variables
+    }
+
+    fn parse_punchcard_color(&self, content: &str) -> Option<String> {
+        // Look for % @lilypond-to-strudel@ <color> punchcard comment
+        let re = regex::Regex::new(r"%\s*@lilypond-to-strudel@\s+(\w+)\s+punchcard").unwrap();
+        re.captures(content).map(|caps| caps.get(1).unwrap().as_str().to_string())
     }
 
     fn extract_braced_content(&self, code: &str, brace_start: usize) -> Option<String> {
@@ -240,17 +284,23 @@ impl LilyPondParser {
             if let Some(staff_content) =
                 self.extract_braced_content(simultaneous_content, brace_pos)
             {
+                let punchcard_color = self.parse_punchcard_color(&staff_content);
                 let resolved = self.resolve_variables(&staff_content, variables);
                 // Check if resolved content is from a drum variable
                 if self.is_drum_content(&staff_content, variables) {
                     let hits = self.parse_drums_from_section(&resolved)?;
                     if !hits.is_empty() {
-                        staves.push(Staff::new_drums(vec![hits]));
+                        let voice_data = DrumVoiceData { events: hits, punchcard_color };
+                        staves.push(Staff::new_drums(vec![voice_data]));
                     }
                 } else {
                     let notes = self.parse_notes_from_section(&resolved)?;
                     if !notes.is_empty() {
-                        staves.push(Staff::new_pitched(notes));
+                        let staff = match punchcard_color {
+                            Some(color) => Staff::new_pitched_with_punchcard(notes, color),
+                            None => Staff::new_pitched(notes),
+                        };
+                        staves.push(staff);
                     }
                 }
             }
@@ -290,7 +340,8 @@ impl LilyPondParser {
                         VariableKind::Drums(content) => {
                             let hits = self.parse_drums_from_section(content)?;
                             if !hits.is_empty() {
-                                staves.push(Staff::new_drums(vec![hits]));
+                                let voice_data = DrumVoiceData { events: hits, punchcard_color: None };
+                                staves.push(Staff::new_drums(vec![voice_data]));
                             }
                         }
                     }
@@ -347,37 +398,53 @@ impl LilyPondParser {
         result
     }
 
-    fn parse_notes_from_section(&self, section: &str) -> Result<Vec<Note>, String> {
-        let mut notes = Vec::new();
+    fn parse_notes_from_section(&self, section: &str) -> Result<Vec<PitchedEvent>, String> {
+        let mut events = Vec::new();
         let tokens = self.tokenize(section);
+        let repeat_start_re = regex::Regex::new(r"^__REPEAT_START_(\d+)__$").unwrap();
 
         for token in tokens {
-            if let Some(note) = self.parse_note(&token)? {
-                notes.push(note);
+            if token.starts_with('|') {
+                events.push(PitchedEvent::BarLine);
+            } else if let Some(caps) = repeat_start_re.captures(&token) {
+                let count: u32 = caps.get(1).unwrap().as_str().parse().unwrap_or(1);
+                events.push(PitchedEvent::RepeatStart(count));
+            } else if token == "__REPEAT_END__" {
+                events.push(PitchedEvent::RepeatEnd);
+            } else if let Some(note) = self.parse_note(&token)? {
+                events.push(PitchedEvent::Note(note));
             }
         }
 
-        Ok(notes)
+        Ok(events)
     }
 
-    fn parse_drums_from_section(&self, section: &str) -> Result<Vec<DrumHit>, String> {
-        let mut hits = Vec::new();
+    fn parse_drums_from_section(&self, section: &str) -> Result<Vec<DrumEvent>, String> {
+        let mut events = Vec::new();
         let tokens = self.tokenize(section);
+        let repeat_start_re = regex::Regex::new(r"^__REPEAT_START_(\d+)__$").unwrap();
 
         for token in tokens {
-            if let Some(hit) = self.parse_drum_hit(&token) {
-                hits.push(hit);
+            if token.starts_with('|') {
+                events.push(DrumEvent::BarLine);
+            } else if let Some(caps) = repeat_start_re.captures(&token) {
+                let count: u32 = caps.get(1).unwrap().as_str().parse().unwrap_or(1);
+                events.push(DrumEvent::RepeatStart(count));
+            } else if token == "__REPEAT_END__" {
+                events.push(DrumEvent::RepeatEnd);
+            } else if let Some(hit) = self.parse_drum_hit(&token) {
+                events.push(DrumEvent::Hit(hit));
             }
         }
 
-        Ok(hits)
+        Ok(events)
     }
 
     fn parse_drum_voices(
         &self,
         staff_content: &str,
         variables: &HashMap<String, VariableKind>,
-    ) -> Result<Vec<Vec<DrumHit>>, String> {
+    ) -> Result<Vec<DrumVoiceData>, String> {
         let mut voices = Vec::new();
 
         // Check if there's a << >> block inside the DrumStaff
@@ -392,10 +459,11 @@ impl LilyPondParser {
                     let brace_pos = simultaneous[..full_match.end()].rfind('{').unwrap();
 
                     if let Some(voice_content) = self.extract_braced_content(simultaneous, brace_pos) {
+                        let punchcard_color = self.parse_punchcard_color(&voice_content);
                         let resolved = self.resolve_variables(&voice_content, variables);
-                        let hits = self.parse_drums_from_section(&resolved)?;
-                        if !hits.is_empty() {
-                            voices.push(hits);
+                        let events = self.parse_drums_from_section(&resolved)?;
+                        if !events.is_empty() {
+                            voices.push(DrumVoiceData { events, punchcard_color });
                         }
                     }
                 }
@@ -406,9 +474,9 @@ impl LilyPondParser {
                     for caps in var_ref_re.captures_iter(simultaneous) {
                         let var_name = caps.get(1).unwrap().as_str();
                         if let Some(VariableKind::Drums(content)) = variables.get(var_name) {
-                            let hits = self.parse_drums_from_section(content)?;
-                            if !hits.is_empty() {
-                                voices.push(hits);
+                            let events = self.parse_drums_from_section(content)?;
+                            if !events.is_empty() {
+                                voices.push(DrumVoiceData { events, punchcard_color: None });
                             }
                         }
                     }
@@ -419,9 +487,9 @@ impl LilyPondParser {
         // Fallback: parse the whole content as a single voice
         if voices.is_empty() {
             let resolved = self.resolve_variables(staff_content, variables);
-            let hits = self.parse_drums_from_section(&resolved)?;
-            if !hits.is_empty() {
-                voices.push(hits);
+            let events = self.parse_drums_from_section(&resolved)?;
+            if !events.is_empty() {
+                voices.push(DrumVoiceData { events, punchcard_color: None });
             }
         }
 
@@ -501,7 +569,7 @@ impl LilyPondParser {
         }
     }
 
-    fn expand_repeats(&self, code: &str) -> String {
+    fn mark_repeats(&self, code: &str) -> String {
         let mut result = code.to_string();
         let re = regex::Regex::new(r"\\repeat\s+\w+\s+(\d+)\s*\{").unwrap();
 
@@ -532,9 +600,10 @@ impl LilyPondParser {
             }
 
             let content = &result[brace_start + 1..end];
-            let expanded = content.repeat(count);
+            // Add markers instead of expanding
+            let marked = format!(" __REPEAT_START_{}__ {} __REPEAT_END__ ", count, content);
 
-            result = format!("{}{}{}", &result[..start], expanded, &result[end + 1..]);
+            result = format!("{}{}{}", &result[..start], marked, &result[end + 1..]);
         }
 
         result
@@ -770,44 +839,6 @@ impl StrudelGenerator {
         tempo.map(|t| t.bpm as f64 / total_beats)
     }
 
-    /// Compress a sequence by finding repeating patterns and using *N syntax
-    fn compress_sequence(items: &[String]) -> String {
-        if items.is_empty() {
-            return String::new();
-        }
-
-        // Try to find the smallest repeating unit
-        let len = items.len();
-        for unit_size in 1..=len / 2 {
-            if len % unit_size == 0 {
-                let unit = &items[0..unit_size];
-                let repeat_count = len / unit_size;
-
-                // Check if the entire sequence is this unit repeated
-                let mut is_repeating = true;
-                for i in 1..repeat_count {
-                    let start = i * unit_size;
-                    if &items[start..start + unit_size] != unit {
-                        is_repeating = false;
-                        break;
-                    }
-                }
-
-                if is_repeating && repeat_count > 1 {
-                    let pattern = unit.join(" ");
-                    if unit_size == 1 {
-                        return format!("{}*{}", pattern, repeat_count);
-                    } else {
-                        return format!("[{}]*{}", pattern, repeat_count);
-                    }
-                }
-            }
-        }
-
-        // No repeating pattern found, return as-is
-        items.join(" ")
-    }
-
     fn format_note(n: &Note) -> String {
         let acc = match &n.accidental {
             Some(a) if a == "is" => "#",
@@ -817,42 +848,116 @@ impl StrudelGenerator {
         format!("{}{}{}", n.name, acc, n.octave)
     }
 
-    pub fn generate_pitched_staff(notes: &[Note], tempo: Option<&Tempo>) -> String {
+    fn format_pitched_note(n: &Note) -> String {
+        let weight = 4.0 / n.duration as f32;
+
+        // Check if this is a chord
+        let note_str = if let Some(ref chord_notes) = n.chord_notes {
+            // Format as [note1,note2,note3]
+            let mut all_notes = vec![Self::format_note(n)];
+            for cn in chord_notes {
+                all_notes.push(Self::format_note(cn));
+            }
+            format!("[{}]", all_notes.join(","))
+        } else {
+            Self::format_note(n)
+        };
+
+        if weight == 1.0 {
+            note_str
+        } else {
+            format!("{}@{}", note_str, weight)
+        }
+    }
+
+    fn generate_pitched_pattern(events: &[PitchedEvent], idx: &mut usize) -> String {
+        let mut parts: Vec<String> = Vec::new();
+
+        while *idx < events.len() {
+            match &events[*idx] {
+                PitchedEvent::Note(n) => {
+                    parts.push(Self::format_pitched_note(n));
+                    *idx += 1;
+                }
+                PitchedEvent::BarLine => {
+                    *idx += 1; // Skip bar lines
+                }
+                PitchedEvent::RepeatStart(count) => {
+                    *idx += 1;
+                    let inner = Self::generate_pitched_pattern(events, idx);
+                    parts.push(format!("[{}]*{}", inner, count));
+                }
+                PitchedEvent::RepeatEnd => {
+                    *idx += 1;
+                    break; // Exit this level of recursion
+                }
+            }
+        }
+
+        parts.join(" ")
+    }
+
+    fn calculate_pitched_beats(events: &[PitchedEvent], idx: &mut usize) -> f64 {
+        let mut total = 0.0;
+        while *idx < events.len() {
+            match &events[*idx] {
+                PitchedEvent::Note(n) => {
+                    total += 4.0 / n.duration as f64;
+                    *idx += 1;
+                }
+                PitchedEvent::BarLine => {
+                    *idx += 1;
+                }
+                PitchedEvent::RepeatStart(count) => {
+                    *idx += 1;
+                    let inner_beats = Self::calculate_pitched_beats(events, idx);
+                    total += inner_beats * (*count as f64);
+                }
+                PitchedEvent::RepeatEnd => {
+                    *idx += 1;
+                    break;
+                }
+            }
+        }
+        total
+    }
+
+    pub fn generate_pitched_staff(events: &[PitchedEvent], tempo: Option<&Tempo>) -> String {
+        Self::generate_pitched_staff_with_options(events, tempo, &None)
+    }
+
+    fn generate_pitched_staff_with_options(
+        events: &[PitchedEvent],
+        tempo: Option<&Tempo>,
+        punchcard_color: &Option<String>,
+    ) -> String {
+        let notes: Vec<&Note> = events
+            .iter()
+            .filter_map(|e| match e {
+                PitchedEvent::Note(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+
         if notes.is_empty() {
             return String::from("// No notes to convert");
         }
 
-        let note_sequence: Vec<String> = notes
-            .iter()
-            .map(|n| {
-                let weight = 4.0 / n.duration as f32;
+        let mut idx = 0;
+        let pattern = Self::generate_pitched_pattern(events, &mut idx);
 
-                // Check if this is a chord
-                let note_str = if let Some(ref chord_notes) = n.chord_notes {
-                    // Format as [note1,note2,note3]
-                    let mut all_notes = vec![Self::format_note(n)];
-                    for cn in chord_notes {
-                        all_notes.push(Self::format_note(cn));
-                    }
-                    format!("[{}]", all_notes.join(","))
-                } else {
-                    Self::format_note(n)
-                };
-
-                if weight == 1.0 {
-                    note_str
-                } else {
-                    format!("{}@{}", note_str, weight)
-                }
-            })
-            .collect();
+        let punchcard_str = match punchcard_color {
+            Some(color) => format!(".color(\"{}\")._punchcard()", color),
+            None => String::new(),
+        };
 
         let base = format!(
-            "note(\"{}\")\n  .s(\"piano\")",
-            Self::compress_sequence(&note_sequence)
+            "note(\"{}\"){}\n  .s(\"piano\")",
+            pattern, punchcard_str
         );
 
-        let total_beats: f64 = notes.iter().map(|n| 4.0 / n.duration as f64).sum();
+        let mut beat_idx = 0;
+        let total_beats = Self::calculate_pitched_beats(events, &mut beat_idx);
         if let Some(cpm) = Self::calculate_cpm(total_beats, tempo) {
             format!("{base}\n  .cpm({cpm})")
         } else {
@@ -860,54 +965,130 @@ impl StrudelGenerator {
         }
     }
 
-    fn generate_single_drum_voice(hits: &[DrumHit], tempo: Option<&Tempo>) -> String {
-        let hit_sequence: Vec<String> = hits
-            .iter()
-            .map(|h| {
-                let weight = 4.0 / h.duration as f32;
-                if weight == 1.0 {
-                    h.name.clone()
-                } else {
-                    format!("{}@{}", h.name, weight)
+    fn format_drum_hit(h: &DrumHit) -> String {
+        let weight = 4.0 / h.duration as f32;
+        if weight == 1.0 {
+            h.name.clone()
+        } else {
+            format!("{}@{}", h.name, weight)
+        }
+    }
+
+    fn calculate_drum_beats(events: &[DrumEvent], idx: &mut usize) -> f64 {
+        let mut total = 0.0;
+        while *idx < events.len() {
+            match &events[*idx] {
+                DrumEvent::Hit(h) => {
+                    total += 4.0 / h.duration as f64;
+                    *idx += 1;
                 }
+                DrumEvent::BarLine => {
+                    *idx += 1;
+                }
+                DrumEvent::RepeatStart(count) => {
+                    *idx += 1;
+                    let inner_beats = Self::calculate_drum_beats(events, idx);
+                    total += inner_beats * (*count as f64);
+                }
+                DrumEvent::RepeatEnd => {
+                    *idx += 1;
+                    break;
+                }
+            }
+        }
+        total
+    }
+
+    fn generate_drum_pattern(events: &[DrumEvent], idx: &mut usize) -> String {
+        let mut parts: Vec<String> = Vec::new();
+
+        while *idx < events.len() {
+            match &events[*idx] {
+                DrumEvent::Hit(h) => {
+                    parts.push(Self::format_drum_hit(h));
+                    *idx += 1;
+                }
+                DrumEvent::BarLine => {
+                    *idx += 1; // Skip bar lines
+                }
+                DrumEvent::RepeatStart(count) => {
+                    *idx += 1;
+                    let inner = Self::generate_drum_pattern(events, idx);
+                    parts.push(format!("[{}]*{}", inner, count));
+                }
+                DrumEvent::RepeatEnd => {
+                    *idx += 1;
+                    break; // Exit this level of recursion
+                }
+            }
+        }
+
+        parts.join(" ")
+    }
+
+    #[allow(dead_code)]
+    fn generate_single_drum_voice(events: &[DrumEvent], tempo: Option<&Tempo>) -> String {
+        Self::generate_single_drum_voice_with_options(events, tempo, &String::new())
+    }
+
+    fn generate_single_drum_voice_with_options(
+        events: &[DrumEvent],
+        tempo: Option<&Tempo>,
+        punchcard_str: &str,
+    ) -> String {
+        let hits: Vec<&DrumHit> = events
+            .iter()
+            .filter_map(|e| match e {
+                DrumEvent::Hit(h) => Some(h),
+                _ => None,
             })
             .collect();
 
-        let base = format!("sound(\"{}\")", Self::compress_sequence(&hit_sequence));
+        if hits.is_empty() {
+            return String::from("// No drum hits to convert");
+        }
 
-        let total_beats: f64 = hits.iter().map(|h| 4.0 / h.duration as f64).sum();
+        let mut idx = 0;
+        let pattern = Self::generate_drum_pattern(events, &mut idx);
+        let base = format!("sound(\"{}\")", pattern);
+
+        let mut beat_idx = 0;
+        let total_beats = Self::calculate_drum_beats(events, &mut beat_idx);
+
+        let with_punchcard = format!("{}{}", base, punchcard_str);
+
         if let Some(cpm) = Self::calculate_cpm(total_beats, tempo) {
-            format!("{base}\n  .cpm({cpm})")
+            format!("{with_punchcard}\n  .cpm({cpm})")
         } else {
-            base
+            with_punchcard
         }
     }
 
-    pub fn generate_drum_staff(voices: &[Vec<DrumHit>], tempo: Option<&Tempo>) -> String {
+    pub fn generate_drum_staff(voices: &[DrumVoiceData], tempo: Option<&Tempo>) -> String {
         if voices.is_empty() {
             return String::from("// No drum hits to convert");
         }
 
         if voices.len() == 1 {
-            return Self::generate_single_drum_voice(&voices[0], tempo);
+            let voice = &voices[0];
+            let punchcard_str = match &voice.punchcard_color {
+                Some(color) => format!(".color(\"{}\")._punchcard()", color),
+                None => String::new(),
+            };
+            return Self::generate_single_drum_voice_with_options(&voice.events, tempo, &punchcard_str);
         }
 
-        // Multiple voices: use stack()
+        // Multiple voices: use stack() with per-voice punchcard
         let voice_patterns: Vec<String> = voices
             .iter()
-            .map(|hits| {
-                let hit_sequence: Vec<String> = hits
-                    .iter()
-                    .map(|h| {
-                        let weight = 4.0 / h.duration as f32;
-                        if weight == 1.0 {
-                            h.name.clone()
-                        } else {
-                            format!("{}@{}", h.name, weight)
-                        }
-                    })
-                    .collect();
-                format!("sound(\"{}\")", Self::compress_sequence(&hit_sequence))
+            .map(|voice| {
+                let mut idx = 0;
+                let pattern = Self::generate_drum_pattern(&voice.events, &mut idx);
+                let punchcard_str = match &voice.punchcard_color {
+                    Some(color) => format!(".color(\"{}\")._punchcard()", color),
+                    None => String::new(),
+                };
+                format!("sound(\"{}\"){}", pattern, punchcard_str)
             })
             .collect();
 
@@ -916,7 +1097,10 @@ impl StrudelGenerator {
         // Use the longest voice to calculate cpm
         let max_beats: f64 = voices
             .iter()
-            .map(|hits| hits.iter().map(|h| 4.0 / h.duration as f64).sum())
+            .map(|voice| {
+                let mut idx = 0;
+                Self::calculate_drum_beats(&voice.events, &mut idx)
+            })
             .fold(0.0, f64::max);
 
         if let Some(cpm) = Self::calculate_cpm(max_beats, tempo) {
@@ -928,14 +1112,17 @@ impl StrudelGenerator {
 
     pub fn generate_staff(staff: &Staff, tempo: Option<&Tempo>) -> String {
         match &staff.content {
-            StaffContent::Notes(notes) => Self::generate_pitched_staff(notes, tempo),
-            StaffContent::Drums(hits) => Self::generate_drum_staff(hits, tempo),
+            StaffContent::Notes(events) => {
+                Self::generate_pitched_staff_with_options(events, tempo, &staff.punchcard_color)
+            }
+            StaffContent::Drums(voices) => Self::generate_drum_staff(voices, tempo),
         }
     }
 
     /// Generate Strudel code for a single staff (backwards compatibility)
     pub fn generate(notes: &[Note], tempo: Option<&Tempo>) -> String {
-        Self::generate_pitched_staff(notes, tempo)
+        let events: Vec<PitchedEvent> = notes.iter().cloned().map(PitchedEvent::Note).collect();
+        Self::generate_pitched_staff(&events, tempo)
     }
 
     /// Generate Strudel code for multiple staves
