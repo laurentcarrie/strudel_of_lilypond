@@ -8,6 +8,8 @@ pub struct Note {
     pub duration: u32,
     #[allow(dead_code)]
     pub midi: i32,
+    /// Additional notes if this is a chord (first note is self)
+    pub chord_notes: Option<Vec<Note>>,
 }
 
 #[derive(Debug, Clone)]
@@ -461,6 +463,9 @@ impl LilyPondParser {
             return None;
         }
 
+        // Map LilyPond drum names to Strudel drum names
+        let strudel_name = Self::lilypond_to_strudel_drum(&name);
+
         // Parse duration
         let mut duration_str = String::new();
         while let Some(&c) = chars.peek() {
@@ -478,7 +483,22 @@ impl LilyPondParser {
             duration_str.parse::<u32>().unwrap_or(4)
         };
 
-        Some(DrumHit { name, duration })
+        Some(DrumHit { name: strudel_name, duration })
+    }
+
+    /// Map LilyPond drum names to Strudel drum names
+    fn lilypond_to_strudel_drum(name: &str) -> String {
+        match name {
+            "sn" => "sd".to_string(),      // snare drum
+            "hhc" => "hh".to_string(),     // closed hi-hat
+            "hho" => "oh".to_string(),     // open hi-hat
+            "cymc" => "cr".to_string(),    // crash cymbal
+            "cymr" => "rd".to_string(),    // ride cymbal
+            "tomh" => "ht".to_string(),    // high tom
+            "tomm" => "mt".to_string(),    // mid tom
+            "toml" => "lt".to_string(),    // low tom
+            _ => name.to_string(),         // keep as-is (bd, hh, etc.)
+        }
     }
 
     fn expand_repeats(&self, code: &str) -> String {
@@ -543,11 +563,43 @@ impl LilyPondParser {
     }
 
     fn tokenize(&self, section: &str) -> Vec<String> {
-        section
-            .split_whitespace()
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect()
+        let mut tokens = Vec::new();
+        let mut current = String::new();
+        let mut in_chord = false;
+
+        for c in section.chars() {
+            if c == '<' {
+                // Start of chord - save any pending token
+                if !current.trim().is_empty() {
+                    tokens.push(current.trim().to_string());
+                }
+                current = String::new();
+                current.push(c);
+                in_chord = true;
+            } else if c == '>' {
+                // End of chord bracket
+                current.push(c);
+                in_chord = false;
+                // Continue collecting duration after >
+            } else if c.is_whitespace() {
+                if in_chord {
+                    // Inside chord, keep spaces
+                    current.push(' ');
+                } else if !current.is_empty() {
+                    // End of token
+                    tokens.push(current.trim().to_string());
+                    current = String::new();
+                }
+            } else {
+                current.push(c);
+            }
+        }
+
+        if !current.trim().is_empty() {
+            tokens.push(current.trim().to_string());
+        }
+
+        tokens.into_iter().filter(|s| !s.is_empty()).collect()
     }
 
     fn parse_note(&self, token: &str) -> Result<Option<Note>, String> {
@@ -556,6 +608,70 @@ impl LilyPondParser {
         if token.starts_with('|') || token.starts_with('\\') || token.starts_with('r') {
             return Ok(None);
         }
+
+        // Check for chord syntax <note note note>duration
+        if token.starts_with('<') {
+            return self.parse_chord(token);
+        }
+
+        self.parse_single_note(token, None)
+    }
+
+    fn parse_chord(&self, token: &str) -> Result<Option<Note>, String> {
+        // Parse <a c e>4 style chord
+        let Some(close_bracket) = token.find('>') else {
+            return Ok(None);
+        };
+
+        let chord_content = &token[1..close_bracket];
+        let after_bracket = &token[close_bracket + 1..];
+
+        // Parse duration after the >
+        let mut duration_str = String::new();
+        for c in after_bracket.chars() {
+            if c.is_numeric() {
+                duration_str.push(c);
+            } else if c != '.' && c != '~' {
+                break;
+            }
+        }
+
+        let duration = if duration_str.is_empty() {
+            4
+        } else {
+            duration_str.parse::<u32>().unwrap_or(4)
+        };
+
+        // Parse individual notes in the chord
+        let note_tokens: Vec<&str> = chord_content.split_whitespace().collect();
+        if note_tokens.is_empty() {
+            return Ok(None);
+        }
+
+        let mut chord_notes = Vec::new();
+        for note_token in &note_tokens {
+            if let Some(note) = self.parse_single_note(note_token, Some(duration))? {
+                chord_notes.push(note);
+            }
+        }
+
+        if chord_notes.is_empty() {
+            return Ok(None);
+        }
+
+        // First note becomes the main note, rest go in chord_notes
+        let mut first_note = chord_notes.remove(0);
+        first_note.chord_notes = if chord_notes.is_empty() {
+            None
+        } else {
+            Some(chord_notes)
+        };
+
+        Ok(Some(first_note))
+    }
+
+    fn parse_single_note(&self, token: &str, override_duration: Option<u32>) -> Result<Option<Note>, String> {
+        let token = token.trim();
 
         let mut chars = token.chars().peekable();
 
@@ -610,11 +726,13 @@ impl LilyPondParser {
             return Ok(None);
         }
 
-        let duration = if duration_str.is_empty() {
-            4
-        } else {
-            duration_str.parse::<u32>().unwrap_or(4)
-        };
+        let duration = override_duration.unwrap_or_else(|| {
+            if duration_str.is_empty() {
+                4
+            } else {
+                duration_str.parse::<u32>().unwrap_or(4)
+            }
+        });
 
         let mut midi = *self.note_to_midi.get(&note_name).unwrap();
 
@@ -634,6 +752,7 @@ impl LilyPondParser {
             accidental,
             duration,
             midi,
+            chord_notes: None,
         }))
     }
 }
@@ -651,6 +770,53 @@ impl StrudelGenerator {
         tempo.map(|t| t.bpm as f64 / total_beats)
     }
 
+    /// Compress a sequence by finding repeating patterns and using *N syntax
+    fn compress_sequence(items: &[String]) -> String {
+        if items.is_empty() {
+            return String::new();
+        }
+
+        // Try to find the smallest repeating unit
+        let len = items.len();
+        for unit_size in 1..=len / 2 {
+            if len % unit_size == 0 {
+                let unit = &items[0..unit_size];
+                let repeat_count = len / unit_size;
+
+                // Check if the entire sequence is this unit repeated
+                let mut is_repeating = true;
+                for i in 1..repeat_count {
+                    let start = i * unit_size;
+                    if &items[start..start + unit_size] != unit {
+                        is_repeating = false;
+                        break;
+                    }
+                }
+
+                if is_repeating && repeat_count > 1 {
+                    let pattern = unit.join(" ");
+                    if unit_size == 1 {
+                        return format!("{}*{}", pattern, repeat_count);
+                    } else {
+                        return format!("[{}]*{}", pattern, repeat_count);
+                    }
+                }
+            }
+        }
+
+        // No repeating pattern found, return as-is
+        items.join(" ")
+    }
+
+    fn format_note(n: &Note) -> String {
+        let acc = match &n.accidental {
+            Some(a) if a == "is" => "#",
+            Some(a) if a == "es" => "b",
+            _ => "",
+        };
+        format!("{}{}{}", n.name, acc, n.octave)
+    }
+
     pub fn generate_pitched_staff(notes: &[Note], tempo: Option<&Tempo>) -> String {
         if notes.is_empty() {
             return String::from("// No notes to convert");
@@ -659,23 +825,31 @@ impl StrudelGenerator {
         let note_sequence: Vec<String> = notes
             .iter()
             .map(|n| {
-                let acc = match &n.accidental {
-                    Some(a) if a == "is" => "#",
-                    Some(a) if a == "es" => "b",
-                    _ => "",
-                };
                 let weight = 4.0 / n.duration as f32;
-                if weight == 1.0 {
-                    format!("{}{}{}", n.name, acc, n.octave)
+
+                // Check if this is a chord
+                let note_str = if let Some(ref chord_notes) = n.chord_notes {
+                    // Format as [note1,note2,note3]
+                    let mut all_notes = vec![Self::format_note(n)];
+                    for cn in chord_notes {
+                        all_notes.push(Self::format_note(cn));
+                    }
+                    format!("[{}]", all_notes.join(","))
                 } else {
-                    format!("{}{}{}@{}", n.name, acc, n.octave, weight)
+                    Self::format_note(n)
+                };
+
+                if weight == 1.0 {
+                    note_str
+                } else {
+                    format!("{}@{}", note_str, weight)
                 }
             })
             .collect();
 
         let base = format!(
             "note(\"{}\")\n  .s(\"piano\")",
-            note_sequence.join(" ")
+            Self::compress_sequence(&note_sequence)
         );
 
         let total_beats: f64 = notes.iter().map(|n| 4.0 / n.duration as f64).sum();
@@ -699,7 +873,7 @@ impl StrudelGenerator {
             })
             .collect();
 
-        let base = format!("sound(\"{}\")", hit_sequence.join(" "));
+        let base = format!("sound(\"{}\")", Self::compress_sequence(&hit_sequence));
 
         let total_beats: f64 = hits.iter().map(|h| 4.0 / h.duration as f64).sum();
         if let Some(cpm) = Self::calculate_cpm(total_beats, tempo) {
@@ -733,7 +907,7 @@ impl StrudelGenerator {
                         }
                     })
                     .collect();
-                format!("sound(\"{}\")", hit_sequence.join(" "))
+                format!("sound(\"{}\")", Self::compress_sequence(&hit_sequence))
             })
             .collect();
 
