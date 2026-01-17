@@ -16,10 +16,22 @@ pub struct Tempo {
     pub bpm: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct Staff {
+    pub notes: Vec<Note>,
+}
+
 #[derive(Debug)]
 pub struct ParseResult {
-    pub notes: Vec<Note>,
+    pub staves: Vec<Staff>,
     pub tempo: Option<Tempo>,
+}
+
+impl ParseResult {
+    /// For backwards compatibility: returns all notes flattened
+    pub fn notes(&self) -> Vec<Note> {
+        self.staves.iter().flat_map(|s| s.notes.clone()).collect()
+    }
 }
 
 pub struct LilyPondParser {
@@ -42,10 +54,169 @@ impl LilyPondParser {
 
     pub fn parse(&self, code: &str) -> Result<ParseResult, String> {
         let tempo = self.parse_tempo(code);
+        let variables = self.parse_variables(code);
         let expanded = self.expand_repeats(code);
+        let variables_expanded: HashMap<String, String> = variables
+            .into_iter()
+            .map(|(k, v)| (k, self.expand_repeats(&v)))
+            .collect();
+
+        // Try to parse score with staves first
+        if let Some(staves) = self.parse_score_staves(&expanded, &variables_expanded)? {
+            return Ok(ParseResult { staves, tempo });
+        }
+
+        // Fallback: parse as single staff
         let notes_section = self.extract_notes_section(&expanded)?;
+        let notes = self.parse_notes_from_section(&notes_section)?;
+
+        Ok(ParseResult {
+            staves: vec![Staff { notes }],
+            tempo,
+        })
+    }
+
+    fn parse_variables(&self, code: &str) -> HashMap<String, String> {
+        let mut variables = HashMap::new();
+        let re = regex::Regex::new(r"(?m)^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\{").unwrap();
+
+        for caps in re.captures_iter(code) {
+            let name = caps.get(1).unwrap().as_str().to_string();
+            let brace_start = caps.get(0).unwrap().end() - 1;
+
+            if let Some(content) = self.extract_braced_content(code, brace_start) {
+                variables.insert(name, content);
+            }
+        }
+
+        variables
+    }
+
+    fn extract_braced_content(&self, code: &str, brace_start: usize) -> Option<String> {
+        let mut depth = 1;
+
+        for (i, c) in code[brace_start + 1..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let end = brace_start + 1 + i;
+                        return Some(code[brace_start + 1..end].to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn parse_score_staves(
+        &self,
+        code: &str,
+        variables: &HashMap<String, String>,
+    ) -> Result<Option<Vec<Staff>>, String> {
+        // Find \score { << ... >> } blocks
+        let score_re = regex::Regex::new(r"\\score\s*\{").unwrap();
+
+        let Some(score_match) = score_re.find(code) else {
+            return Ok(None);
+        };
+
+        let brace_start = score_match.end() - 1;
+        let Some(score_content) = self.extract_braced_content(code, brace_start) else {
+            return Ok(None);
+        };
+
+        // Find << >> block within score
+        let Some(sim_start) = score_content.find("<<") else {
+            return Ok(None);
+        };
+        let Some(sim_end) = score_content.rfind(">>") else {
+            return Ok(None);
+        };
+
+        if sim_start >= sim_end {
+            return Ok(None);
+        }
+
+        let simultaneous_content = &score_content[sim_start + 2..sim_end];
+
+        // Find all \new Staff or \new TabStaff blocks
+        let staff_re = regex::Regex::new(r"\\new\s+(Staff|TabStaff)\s*\{").unwrap();
+        let mut staves = Vec::new();
+
+        for caps in staff_re.captures_iter(simultaneous_content) {
+            let full_match = caps.get(0).unwrap();
+            let brace_pos = simultaneous_content[..full_match.end()]
+                .rfind('{')
+                .unwrap();
+            let abs_brace_pos = brace_pos;
+
+            if let Some(staff_content) =
+                self.extract_braced_content(simultaneous_content, abs_brace_pos)
+            {
+                // Resolve variable references in staff content
+                let resolved = self.resolve_variables(&staff_content, variables);
+                let notes = self.parse_notes_from_section(&resolved)?;
+                if !notes.is_empty() {
+                    staves.push(Staff { notes });
+                }
+            }
+        }
+
+        // If no \new Staff blocks found, look for direct variable references
+        if staves.is_empty() {
+            let var_ref_re = regex::Regex::new(r"\\([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
+            for caps in var_ref_re.captures_iter(simultaneous_content) {
+                let var_name = caps.get(1).unwrap().as_str();
+                if let Some(var_content) = variables.get(var_name) {
+                    let notes = self.parse_notes_from_section(var_content)?;
+                    if !notes.is_empty() {
+                        staves.push(Staff { notes });
+                    }
+                }
+            }
+        }
+
+        if staves.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(staves))
+        }
+    }
+
+    fn resolve_variables(&self, content: &str, variables: &HashMap<String, String>) -> String {
+        let mut result = content.to_string();
+        let var_ref_re = regex::Regex::new(r"\\([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
+
+        // Keep resolving until no more changes (handles nested references)
+        loop {
+            let mut changed = false;
+            let new_result = var_ref_re
+                .replace_all(&result, |caps: &regex::Captures| {
+                    let var_name = caps.get(1).unwrap().as_str();
+                    if let Some(var_content) = variables.get(var_name) {
+                        changed = true;
+                        var_content.clone()
+                    } else {
+                        caps.get(0).unwrap().as_str().to_string()
+                    }
+                })
+                .to_string();
+
+            result = new_result;
+            if !changed {
+                break;
+            }
+        }
+
+        result
+    }
+
+    fn parse_notes_from_section(&self, section: &str) -> Result<Vec<Note>, String> {
         let mut notes = Vec::new();
-        let tokens = self.tokenize(&notes_section);
+        let tokens = self.tokenize(section);
 
         for token in tokens {
             if let Some(note) = self.parse_note(&token)? {
@@ -53,7 +224,7 @@ impl LilyPondParser {
             }
         }
 
-        Ok(ParseResult { notes, tempo })
+        Ok(notes)
     }
 
     fn expand_repeats(&self, code: &str) -> String {
@@ -151,8 +322,14 @@ impl LilyPondParser {
         let mut octave = 4;
         while let Some(&c) = chars.peek() {
             match c {
-                '\'' => { octave += 1; chars.next(); }
-                ',' => { octave -= 1; chars.next(); }
+                '\'' => {
+                    octave += 1;
+                    chars.next();
+                }
+                ',' => {
+                    octave -= 1;
+                    chars.next();
+                }
                 _ => break,
             }
         }
@@ -216,7 +393,7 @@ impl Default for LilyPondParser {
 pub struct StrudelGenerator;
 
 impl StrudelGenerator {
-    pub fn generate(notes: &[Note], tempo: Option<&Tempo>) -> String {
+    pub fn generate_staff(notes: &[Note], tempo: Option<&Tempo>) -> String {
         if notes.is_empty() {
             return String::from("// No notes to convert");
         }
@@ -254,8 +431,26 @@ impl StrudelGenerator {
         }
     }
 
-    pub fn generate_html(notes: &[Note], tempo: Option<&Tempo>, title: &str) -> String {
-        let pattern = Self::generate(notes, tempo);
+    /// Generate Strudel code for a single staff (backwards compatibility)
+    pub fn generate(notes: &[Note], tempo: Option<&Tempo>) -> String {
+        Self::generate_staff(notes, tempo)
+    }
+
+    /// Generate Strudel code for multiple staves
+    pub fn generate_multi(staves: &[Staff], tempo: Option<&Tempo>) -> String {
+        if staves.is_empty() {
+            return String::from("// No staves to convert");
+        }
+
+        staves
+            .iter()
+            .map(|staff| format!("$: {}", Self::generate_staff(&staff.notes, tempo)))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    pub fn generate_html(staves: &[Staff], tempo: Option<&Tempo>, title: &str) -> String {
+        let pattern = Self::generate_multi(staves, tempo);
         format!(
             r#"<!DOCTYPE html>
 <html>

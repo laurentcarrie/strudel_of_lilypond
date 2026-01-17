@@ -36,11 +36,12 @@ fn main() {
 
     match parser.parse(&input) {
         Ok(result) => {
-            eprintln!("Parsed {} notes", result.notes.len());
+            let total_notes: usize = result.staves.iter().map(|s| s.notes.len()).sum();
+            eprintln!("Parsed {} staves, {} notes total", result.staves.len(), total_notes);
             if let Some(ref tempo) = result.tempo {
                 eprintln!("Tempo: {} = {} BPM", tempo.beat_unit, tempo.bpm);
             }
-            let html = StrudelGenerator::generate_html(&result.notes, result.tempo.as_ref(), stem);
+            let html = StrudelGenerator::generate_html(&result.staves, result.tempo.as_ref(), stem);
 
             match fs::write(&output_path, &html) {
                 Ok(_) => println!("{output_path}"),
