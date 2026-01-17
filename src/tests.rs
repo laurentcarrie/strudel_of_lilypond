@@ -210,9 +210,9 @@ mydrums = \drummode { bd4 hh4 sn4 hh4 }
     let result = parser.parse(code).unwrap();
 
     assert_eq!(result.staves.len(), 1);
-    let voices = result.staves[0].drum_events().unwrap();
+    let voices = result.staves[0].drum_voices().unwrap();
     assert_eq!(voices.len(), 1);
-    let hits: Vec<_> = voices[0].iter().filter_map(|e| match e {
+    let hits: Vec<_> = voices[0].events.iter().filter_map(|e| match e {
         DrumEvent::Hit(h) => Some(h),
         _ => None,
     }).collect();
@@ -225,10 +225,13 @@ mydrums = \drummode { bd4 hh4 sn4 hh4 }
 
 #[test]
 fn test_generate_drum_staff() {
-    let voices = vec![vec![
-        DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 }),
-        DrumEvent::Hit(DrumHit { name: "hh".to_string(), duration: 4 }),
-    ]];
+    let voices = vec![DrumVoiceData {
+        events: vec![
+            DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 }),
+            DrumEvent::Hit(DrumHit { name: "hh".to_string(), duration: 4 }),
+        ],
+        punchcard_color: None,
+    }];
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
     assert!(strudel.contains("sound(\"bd hh\")"));
@@ -255,13 +258,13 @@ hats = \drummode { hh8 hh8 hh8 hh8 }
     let result = parser.parse(code).unwrap();
 
     assert_eq!(result.staves.len(), 1);
-    let voices = result.staves[0].drum_events().unwrap();
+    let voices = result.staves[0].drum_voices().unwrap();
     assert_eq!(voices.len(), 2);
-    let hits0: Vec<_> = voices[0].iter().filter_map(|e| match e {
+    let hits0: Vec<_> = voices[0].events.iter().filter_map(|e| match e {
         DrumEvent::Hit(h) => Some(h),
         _ => None,
     }).collect();
-    let hits1: Vec<_> = voices[1].iter().filter_map(|e| match e {
+    let hits1: Vec<_> = voices[1].events.iter().filter_map(|e| match e {
         DrumEvent::Hit(h) => Some(h),
         _ => None,
     }).collect();
@@ -272,8 +275,14 @@ hats = \drummode { hh8 hh8 hh8 hh8 }
 #[test]
 fn test_generate_multi_voice_drum_staff() {
     let voices = vec![
-        vec![DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 })],
-        vec![DrumEvent::Hit(DrumHit { name: "hh".to_string(), duration: 8 })],
+        DrumVoiceData {
+            events: vec![DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 })],
+            punchcard_color: None,
+        },
+        DrumVoiceData {
+            events: vec![DrumEvent::Hit(DrumHit { name: "hh".to_string(), duration: 8 })],
+            punchcard_color: None,
+        },
     ];
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
@@ -300,7 +309,7 @@ drums = \drummode { bd4 sn4 }
 
     assert_eq!(result.staves.len(), 2);
     assert!(result.staves[0].events().is_some());
-    assert!(result.staves[1].drum_events().is_some());
+    assert!(result.staves[1].drum_voices().is_some());
 }
 
 #[test]
@@ -314,9 +323,10 @@ fn test_generate_mixed_staves() {
             midi: 60,
             chord_notes: None,
         })]),
-        Staff::new_drums(vec![vec![
-            DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 }),
-        ]]),
+        Staff::new_drums(vec![DrumVoiceData {
+            events: vec![DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 })],
+            punchcard_color: None,
+        }]),
     ];
 
     let strudel = StrudelGenerator::generate_multi(&staves, None);

@@ -42,9 +42,9 @@ fn main() {
                 .filter(|e| matches!(e, PitchedEvent::Note(_)))
                 .count();
             let drum_count: usize = result.staves.iter()
-                .filter_map(|s| s.drum_events())
+                .filter_map(|s| s.drum_voices())
                 .flat_map(|voices| voices.iter())
-                .flat_map(|voice| voice.iter())
+                .flat_map(|voice| voice.events.iter())
                 .filter(|e| matches!(e, DrumEvent::Hit(_)))
                 .count();
             eprintln!(
