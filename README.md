@@ -69,18 +69,18 @@ Add a special comment inside a staff or voice to enable Strudel's punchcard visu
 
 ```lilypond
 \new TabStaff {
-  % @lilypond-to-strudel@ red punchcard
+  % @strudel-of-lilypond@ red punchcard
   \voicea
 }
 
 \new DrumStaff {
   <<
     \new DrumVoice {
-      % @lilypond-to-strudel@ cyan punchcard
+      % @strudel-of-lilypond@ cyan punchcard
       \kicks
     }
     \new DrumVoice {
-      % @lilypond-to-strudel@ blue punchcard
+      % @strudel-of-lilypond@ blue punchcard
       \hats
     }
   >>

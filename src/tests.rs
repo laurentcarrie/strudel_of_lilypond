@@ -9,7 +9,7 @@ fn test_parse_simple_notes() {
     let notes = result.notes();
     assert_eq!(notes.len(), 3);
     assert_eq!(notes[0].name, 'c');
-    assert_eq!(notes[0].octave, 5);
+    assert_eq!(notes[0].octave, 4);
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn test_repeat_structure() {
     // Check that the generated output uses *3 syntax
     let events = result.staves[0].events().unwrap();
     let strudel = StrudelGenerator::generate_pitched_staff(events, None);
-    assert!(strudel.contains("[c5 d5]*3"));
+    assert!(strudel.contains("[c4 d4]*3"));
 }
 
 #[test]
@@ -133,7 +133,7 @@ fn test_nested_repeat() {
     // Check nested repeat syntax
     let events = result.staves[0].events().unwrap();
     let strudel = StrudelGenerator::generate_pitched_staff(events, None);
-    assert!(strudel.contains("[c5]*2]*2") || strudel.contains("[[c5]*2]*2"));
+    assert!(strudel.contains("[c4]*2]*2") || strudel.contains("[[c4]*2]*2"));
 }
 
 #[test]
@@ -404,6 +404,6 @@ fn test_bar_line_parsed() {
 
     let strudel = StrudelGenerator::generate_pitched_staff(events, None);
     // Bar lines are skipped in output
-    assert!(strudel.contains("c5 d5 e5 f5"));
+    assert!(strudel.contains("c4 d4 e4 f4"));
 }
 

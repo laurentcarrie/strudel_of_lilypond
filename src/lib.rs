@@ -21,6 +21,7 @@ pub struct DrumHit {
 #[derive(Debug, Clone)]
 pub enum PitchedEvent {
     Note(Note),
+    Rest { duration: u32 },
     BarLine,
     RepeatStart(u32),
     RepeatEnd,
@@ -216,8 +217,8 @@ impl LilyPondParser {
     }
 
     fn parse_punchcard_color(&self, content: &str) -> Option<String> {
-        // Look for % @lilypond-to-strudel@ <color> punchcard comment
-        let re = regex::Regex::new(r"%\s*@lilypond-to-strudel@\s+(\w+)\s+punchcard").unwrap();
+        // Look for % @strudel-of-lilypond@ <color> punchcard comment
+        let re = regex::Regex::new(r"%\s*@strudel-of-lilypond@\s+(\w+)\s+punchcard").unwrap();
         re.captures(content).map(|caps| caps.get(1).unwrap().as_str().to_string())
     }
 
@@ -411,6 +412,8 @@ impl LilyPondParser {
                 events.push(PitchedEvent::RepeatStart(count));
             } else if token == "__REPEAT_END__" {
                 events.push(PitchedEvent::RepeatEnd);
+            } else if let Some(rest) = self.parse_rest(&token) {
+                events.push(rest);
             } else if let Some(note) = self.parse_note(&token)? {
                 events.push(PitchedEvent::Note(note));
             }
@@ -671,10 +674,45 @@ impl LilyPondParser {
         tokens.into_iter().filter(|s| !s.is_empty()).collect()
     }
 
+    fn parse_rest(&self, token: &str) -> Option<PitchedEvent> {
+        let token = token.trim();
+
+        // Must start with 'r' and not be a command like \repeat
+        if !token.starts_with('r') || token.starts_with("repeat") {
+            return None;
+        }
+
+        // Parse duration after 'r'
+        let mut chars = token[1..].chars().peekable();
+        let mut duration_str = String::new();
+
+        while let Some(&c) = chars.peek() {
+            if c.is_numeric() {
+                duration_str.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        // Verify no alphabetic characters follow (would indicate this isn't a rest)
+        if chars.any(|c| c.is_alphabetic()) {
+            return None;
+        }
+
+        let duration = if duration_str.is_empty() {
+            4 // Default to quarter note
+        } else {
+            duration_str.parse::<u32>().unwrap_or(4)
+        };
+
+        Some(PitchedEvent::Rest { duration })
+    }
+
     fn parse_note(&self, token: &str) -> Result<Option<Note>, String> {
         let token = token.trim();
 
-        if token.starts_with('|') || token.starts_with('\\') || token.starts_with('r') {
+        if token.starts_with('|') || token.starts_with('\\') {
             return Ok(None);
         }
 
@@ -758,7 +796,7 @@ impl LilyPondParser {
             }
         }
 
-        let mut octave = 4;
+        let mut octave = 3; // LilyPond base octave (c = C3, c' = C4 middle C)
         while let Some(&c) = chars.peek() {
             match c {
                 '\'' => {
@@ -813,7 +851,7 @@ impl LilyPondParser {
             }
         }
 
-        midi += octave * 12;
+        midi += (octave + 1) * 12; // MIDI octave offset: C4 = 60
 
         Ok(Some(Note {
             name: note_name,
@@ -870,6 +908,19 @@ impl StrudelGenerator {
         }
     }
 
+    fn format_rest(duration: u32) -> String {
+        // Convert rest duration to number of quarter note rests
+        // duration 4 = 1 quarter note = "~"
+        // duration 2 = half note = 2 quarter notes = "~ ~"
+        // duration 1 = whole note = 4 quarter notes = "~ ~ ~ ~"
+        let quarter_notes = 4 / duration;
+        if quarter_notes <= 1 {
+            "~".to_string()
+        } else {
+            vec!["~"; quarter_notes as usize].join(" ")
+        }
+    }
+
     fn generate_pitched_pattern(events: &[PitchedEvent], idx: &mut usize) -> String {
         let mut parts: Vec<String> = Vec::new();
 
@@ -877,6 +928,10 @@ impl StrudelGenerator {
             match &events[*idx] {
                 PitchedEvent::Note(n) => {
                     parts.push(Self::format_pitched_note(n));
+                    *idx += 1;
+                }
+                PitchedEvent::Rest { duration } => {
+                    parts.push(Self::format_rest(*duration));
                     *idx += 1;
                 }
                 PitchedEvent::BarLine => {
@@ -903,6 +958,10 @@ impl StrudelGenerator {
             match &events[*idx] {
                 PitchedEvent::Note(n) => {
                     total += 4.0 / n.duration as f64;
+                    *idx += 1;
+                }
+                PitchedEvent::Rest { duration } => {
+                    total += 4.0 / *duration as f64;
                     *idx += 1;
                 }
                 PitchedEvent::BarLine => {
