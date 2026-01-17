@@ -345,3 +345,19 @@ fn test_generate_chord() {
     let strudel = StrudelGenerator::generate(&notes, None);
     assert!(strudel.contains("[a4,c4,e4]"));
 }
+
+#[test]
+fn test_pattern_compression() {
+    // Test single element repetition
+    let parser = LilyPondParser::new();
+    let code = "{ c'4 c'4 c'4 c'4 }";
+    let result = parser.parse(code).unwrap();
+    let strudel = StrudelGenerator::generate(&result.notes(), None);
+    assert!(strudel.contains("c5*4"));
+
+    // Test pattern repetition
+    let code2 = "{ c'4 d'4 c'4 d'4 }";
+    let result2 = parser.parse(code2).unwrap();
+    let strudel2 = StrudelGenerator::generate(&result2.notes(), None);
+    assert!(strudel2.contains("[c5 d5]*2"));
+}

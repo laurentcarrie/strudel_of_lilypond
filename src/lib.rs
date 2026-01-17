@@ -770,6 +770,44 @@ impl StrudelGenerator {
         tempo.map(|t| t.bpm as f64 / total_beats)
     }
 
+    /// Compress a sequence by finding repeating patterns and using *N syntax
+    fn compress_sequence(items: &[String]) -> String {
+        if items.is_empty() {
+            return String::new();
+        }
+
+        // Try to find the smallest repeating unit
+        let len = items.len();
+        for unit_size in 1..=len / 2 {
+            if len % unit_size == 0 {
+                let unit = &items[0..unit_size];
+                let repeat_count = len / unit_size;
+
+                // Check if the entire sequence is this unit repeated
+                let mut is_repeating = true;
+                for i in 1..repeat_count {
+                    let start = i * unit_size;
+                    if &items[start..start + unit_size] != unit {
+                        is_repeating = false;
+                        break;
+                    }
+                }
+
+                if is_repeating && repeat_count > 1 {
+                    let pattern = unit.join(" ");
+                    if unit_size == 1 {
+                        return format!("{}*{}", pattern, repeat_count);
+                    } else {
+                        return format!("[{}]*{}", pattern, repeat_count);
+                    }
+                }
+            }
+        }
+
+        // No repeating pattern found, return as-is
+        items.join(" ")
+    }
+
     fn format_note(n: &Note) -> String {
         let acc = match &n.accidental {
             Some(a) if a == "is" => "#",
@@ -811,7 +849,7 @@ impl StrudelGenerator {
 
         let base = format!(
             "note(\"{}\")\n  .s(\"piano\")",
-            note_sequence.join(" ")
+            Self::compress_sequence(&note_sequence)
         );
 
         let total_beats: f64 = notes.iter().map(|n| 4.0 / n.duration as f64).sum();
@@ -835,7 +873,7 @@ impl StrudelGenerator {
             })
             .collect();
 
-        let base = format!("sound(\"{}\")", hit_sequence.join(" "));
+        let base = format!("sound(\"{}\")", Self::compress_sequence(&hit_sequence));
 
         let total_beats: f64 = hits.iter().map(|h| 4.0 / h.duration as f64).sum();
         if let Some(cpm) = Self::calculate_cpm(total_beats, tempo) {
@@ -869,7 +907,7 @@ impl StrudelGenerator {
                         }
                     })
                     .collect();
-                format!("sound(\"{}\")", hit_sequence.join(" "))
+                format!("sound(\"{}\")", Self::compress_sequence(&hit_sequence))
             })
             .collect();
 
