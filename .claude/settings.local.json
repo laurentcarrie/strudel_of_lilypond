@@ -4,7 +4,8 @@
       "Bash(sudo chown:*)",
       "Bash(PUPPETEER_CACHE_DIR=/tmp/puppeteer-cache npm install:*)",
       "Bash(cargo build:*)",
-      "Bash(cargo run:*)"
+      "Bash(cargo run:*)",
+      "Bash(cargo test:*)"
     ]
   }
 }
