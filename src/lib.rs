@@ -244,7 +244,10 @@ impl StrudelGenerator {
         );
 
         if let Some(t) = tempo {
-            let cpm = t.bpm as f64 / t.beat_unit as f64;
+            // Calculate total beats in pattern (sum of weights, where weight = 4/duration)
+            let total_beats: f64 = notes.iter().map(|n| 4.0 / n.duration as f64).sum();
+            // cpm = beats per minute / beats per cycle
+            let cpm = t.bpm as f64 / total_beats;
             format!("{base}\n  .cpm({cpm})")
         } else {
             base

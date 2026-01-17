@@ -77,7 +77,8 @@ fn test_generate_with_tempo() {
     let tempo = Tempo { beat_unit: 4, bpm: 120 };
 
     let strudel = StrudelGenerator::generate(&notes, Some(&tempo));
-    assert!(strudel.contains(".cpm(30)"));
+    // 1 note with weight 1 at 120 BPM = 120 cpm
+    assert!(strudel.contains(".cpm(120)"));
 }
 
 #[test]
