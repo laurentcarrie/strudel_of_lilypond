@@ -46,6 +46,7 @@ fn test_generate_strudel() {
             accidental: None,
             duration: 4,
             midi: 60,
+            chord_notes: None,
         },
     ];
 
@@ -75,6 +76,7 @@ fn test_generate_with_tempo() {
             accidental: None,
             duration: 4,
             midi: 60,
+            chord_notes: None,
         },
     ];
     let tempo = Tempo { beat_unit: 4, bpm: 120 };
@@ -93,6 +95,7 @@ fn test_generate_without_tempo() {
             accidental: None,
             duration: 4,
             midi: 60,
+            chord_notes: None,
         },
     ];
 
@@ -153,6 +156,7 @@ fn test_generate_multi_staff() {
             accidental: None,
             duration: 4,
             midi: 60,
+            chord_notes: None,
         }]),
         Staff::new_pitched(vec![Note {
             name: 'e',
@@ -160,6 +164,7 @@ fn test_generate_multi_staff() {
             accidental: None,
             duration: 4,
             midi: 64,
+            chord_notes: None,
         }]),
     ];
 
@@ -188,7 +193,7 @@ mydrums = \drummode { bd4 hh4 sn4 hh4 }
     assert_eq!(voices[0].len(), 4);
     assert_eq!(voices[0][0].name, "bd");
     assert_eq!(voices[0][1].name, "hh");
-    assert_eq!(voices[0][2].name, "sn");
+    assert_eq!(voices[0][2].name, "sd");  // sn -> sd in Strudel
     assert_eq!(voices[0][3].name, "hh");
 }
 
@@ -273,6 +278,7 @@ fn test_generate_mixed_staves() {
             accidental: None,
             duration: 4,
             midi: 60,
+            chord_notes: None,
         }]),
         Staff::new_drums(vec![vec![
             DrumHit { name: "bd".to_string(), duration: 4 },
@@ -282,4 +288,60 @@ fn test_generate_mixed_staves() {
     let strudel = StrudelGenerator::generate_multi(&staves, None);
     assert!(strudel.contains("$: note(\"c4\")"));
     assert!(strudel.contains("$: sound(\"bd\")"));
+}
+
+#[test]
+fn test_parse_chord() {
+    let parser = LilyPondParser::new();
+    let code = "{ <a c e>4 g'4 }";
+    let result = parser.parse(code).unwrap();
+
+    let notes = result.notes();
+    assert_eq!(notes.len(), 2);
+
+    // First note is a chord
+    assert_eq!(notes[0].name, 'a');
+    assert!(notes[0].chord_notes.is_some());
+    let chord_notes = notes[0].chord_notes.as_ref().unwrap();
+    assert_eq!(chord_notes.len(), 2);
+    assert_eq!(chord_notes[0].name, 'c');
+    assert_eq!(chord_notes[1].name, 'e');
+
+    // Second note is a regular note
+    assert_eq!(notes[1].name, 'g');
+    assert!(notes[1].chord_notes.is_none());
+}
+
+#[test]
+fn test_generate_chord() {
+    let notes = vec![
+        Note {
+            name: 'a',
+            octave: 4,
+            accidental: None,
+            duration: 4,
+            midi: 57,
+            chord_notes: Some(vec![
+                Note {
+                    name: 'c',
+                    octave: 4,
+                    accidental: None,
+                    duration: 4,
+                    midi: 48,
+                    chord_notes: None,
+                },
+                Note {
+                    name: 'e',
+                    octave: 4,
+                    accidental: None,
+                    duration: 4,
+                    midi: 52,
+                    chord_notes: None,
+                },
+            ]),
+        },
+    ];
+
+    let strudel = StrudelGenerator::generate(&notes, None);
+    assert!(strudel.contains("[a4,c4,e4]"));
 }
