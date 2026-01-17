@@ -2,6 +2,11 @@
 name = "strudel-of-lilypond"
 version = "0.1.0"
 edition = "2024"
+description = "Convert LilyPond music notation to Strudel live coding patterns"
+license = "MIT"
+repository = "https://github.com/laurentcarrie/strudel_of_lilypond"
+keywords = ["lilypond", "strudel", "music", "notation", "live-coding"]
+categories = ["multimedia::audio", "parser-implementations"]
 
 [dependencies]
 regex = "1"
