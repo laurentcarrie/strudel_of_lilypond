@@ -69,8 +69,8 @@ Generates Strudel patterns:
 Add special comments inside a staff or voice to control Strudel output:
 
 - `% @strudel-of-lilypond@ <color> punchcard` - Enable punchcard visualization with color
-- `% @strudel-of-lilypond@ gain <value>` - Set gain/volume
-- `% @strudel-of-lilypond@ pan <value>` - Set stereo panning (0 = left, 0.5 = center, 1 = right)
+- `% @strudel-of-lilypond@ gain <value>` - Set gain/volume (supports patterns like `<0.5 1 1.5>`)
+- `% @strudel-of-lilypond@ pan <value>` - Set stereo panning (supports patterns like `<0 .5 1>`)
 
 ```lilypond
 \new TabStaff {
