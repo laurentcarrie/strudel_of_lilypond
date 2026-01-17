@@ -11,14 +11,64 @@ pub struct Note {
 }
 
 #[derive(Debug, Clone)]
+pub struct DrumHit {
+    pub name: String,
+    pub duration: u32,
+}
+
+#[derive(Debug, Clone)]
 pub struct Tempo {
     pub beat_unit: u32,
     pub bpm: u32,
 }
 
 #[derive(Debug, Clone)]
+pub enum StaffKind {
+    Pitched,
+    Drums,
+}
+
+#[derive(Debug, Clone)]
+pub enum StaffContent {
+    Notes(Vec<Note>),
+    /// Multiple drum voices that play simultaneously (each Vec<DrumHit> is one voice)
+    Drums(Vec<Vec<DrumHit>>),
+}
+
+#[derive(Debug, Clone)]
 pub struct Staff {
-    pub notes: Vec<Note>,
+    pub kind: StaffKind,
+    pub content: StaffContent,
+}
+
+impl Staff {
+    pub fn new_pitched(notes: Vec<Note>) -> Self {
+        Staff {
+            kind: StaffKind::Pitched,
+            content: StaffContent::Notes(notes),
+        }
+    }
+
+    pub fn new_drums(voices: Vec<Vec<DrumHit>>) -> Self {
+        Staff {
+            kind: StaffKind::Drums,
+            content: StaffContent::Drums(voices),
+        }
+    }
+
+    pub fn notes(&self) -> Option<&Vec<Note>> {
+        match &self.content {
+            StaffContent::Notes(notes) => Some(notes),
+            _ => None,
+        }
+    }
+
+    pub fn drums(&self) -> Option<&Vec<Vec<DrumHit>>> {
+        match &self.content {
+            StaffContent::Drums(voices) => Some(voices),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -30,8 +80,18 @@ pub struct ParseResult {
 impl ParseResult {
     /// For backwards compatibility: returns all notes flattened
     pub fn notes(&self) -> Vec<Note> {
-        self.staves.iter().flat_map(|s| s.notes.clone()).collect()
+        self.staves
+            .iter()
+            .filter_map(|s| s.notes())
+            .flat_map(|n| n.clone())
+            .collect()
     }
+}
+
+#[derive(Clone)]
+enum VariableKind {
+    Pitched(String),
+    Drums(String),
 }
 
 pub struct LilyPondParser {
@@ -56,9 +116,19 @@ impl LilyPondParser {
         let tempo = self.parse_tempo(code);
         let variables = self.parse_variables(code);
         let expanded = self.expand_repeats(code);
-        let variables_expanded: HashMap<String, String> = variables
+        let variables_expanded: HashMap<String, VariableKind> = variables
             .into_iter()
-            .map(|(k, v)| (k, self.expand_repeats(&v)))
+            .map(|(k, v)| {
+                let expanded_content = self.expand_repeats(match &v {
+                    VariableKind::Pitched(s) => s,
+                    VariableKind::Drums(s) => s,
+                });
+                let new_v = match v {
+                    VariableKind::Pitched(_) => VariableKind::Pitched(expanded_content),
+                    VariableKind::Drums(_) => VariableKind::Drums(expanded_content),
+                };
+                (k, new_v)
+            })
             .collect();
 
         // Try to parse score with staves first
@@ -71,21 +141,34 @@ impl LilyPondParser {
         let notes = self.parse_notes_from_section(&notes_section)?;
 
         Ok(ParseResult {
-            staves: vec![Staff { notes }],
+            staves: vec![Staff::new_pitched(notes)],
             tempo,
         })
     }
 
-    fn parse_variables(&self, code: &str) -> HashMap<String, String> {
+    fn parse_variables(&self, code: &str) -> HashMap<String, VariableKind> {
         let mut variables = HashMap::new();
-        let re = regex::Regex::new(r"(?m)^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\{").unwrap();
 
+        // Parse regular variables: name = { ... }
+        let re = regex::Regex::new(r"(?m)^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\{").unwrap();
         for caps in re.captures_iter(code) {
             let name = caps.get(1).unwrap().as_str().to_string();
             let brace_start = caps.get(0).unwrap().end() - 1;
 
             if let Some(content) = self.extract_braced_content(code, brace_start) {
-                variables.insert(name, content);
+                variables.insert(name, VariableKind::Pitched(content));
+            }
+        }
+
+        // Parse drummode variables: name = \drummode { ... }
+        let drum_re =
+            regex::Regex::new(r"(?m)^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\\drummode\s*\{").unwrap();
+        for caps in drum_re.captures_iter(code) {
+            let name = caps.get(1).unwrap().as_str().to_string();
+            let brace_start = caps.get(0).unwrap().end() - 1;
+
+            if let Some(content) = self.extract_braced_content(code, brace_start) {
+                variables.insert(name, VariableKind::Drums(content));
             }
         }
 
@@ -114,7 +197,7 @@ impl LilyPondParser {
     fn parse_score_staves(
         &self,
         code: &str,
-        variables: &HashMap<String, String>,
+        variables: &HashMap<String, VariableKind>,
     ) -> Result<Option<Vec<Staff>>, String> {
         // Find \score { << ... >> } blocks
         let score_re = regex::Regex::new(r"\\score\s*\{").unwrap();
@@ -142,25 +225,49 @@ impl LilyPondParser {
 
         let simultaneous_content = &score_content[sim_start + 2..sim_end];
 
-        // Find all \new Staff or \new TabStaff blocks
-        let staff_re = regex::Regex::new(r"\\new\s+(Staff|TabStaff)\s*\{").unwrap();
         let mut staves = Vec::new();
 
+        // Find all \new Staff or \new TabStaff blocks (pitched)
+        let staff_re = regex::Regex::new(r"\\new\s+(Staff|TabStaff)\s*\{").unwrap();
         for caps in staff_re.captures_iter(simultaneous_content) {
             let full_match = caps.get(0).unwrap();
             let brace_pos = simultaneous_content[..full_match.end()]
                 .rfind('{')
                 .unwrap();
-            let abs_brace_pos = brace_pos;
 
             if let Some(staff_content) =
-                self.extract_braced_content(simultaneous_content, abs_brace_pos)
+                self.extract_braced_content(simultaneous_content, brace_pos)
             {
-                // Resolve variable references in staff content
                 let resolved = self.resolve_variables(&staff_content, variables);
-                let notes = self.parse_notes_from_section(&resolved)?;
-                if !notes.is_empty() {
-                    staves.push(Staff { notes });
+                // Check if resolved content is from a drum variable
+                if self.is_drum_content(&staff_content, variables) {
+                    let hits = self.parse_drums_from_section(&resolved)?;
+                    if !hits.is_empty() {
+                        staves.push(Staff::new_drums(vec![hits]));
+                    }
+                } else {
+                    let notes = self.parse_notes_from_section(&resolved)?;
+                    if !notes.is_empty() {
+                        staves.push(Staff::new_pitched(notes));
+                    }
+                }
+            }
+        }
+
+        // Find all \new DrumStaff blocks
+        let drum_staff_re = regex::Regex::new(r"\\new\s+DrumStaff\s*\{").unwrap();
+        for caps in drum_staff_re.captures_iter(simultaneous_content) {
+            let full_match = caps.get(0).unwrap();
+            let brace_pos = simultaneous_content[..full_match.end()]
+                .rfind('{')
+                .unwrap();
+
+            if let Some(staff_content) =
+                self.extract_braced_content(simultaneous_content, brace_pos)
+            {
+                let voices = self.parse_drum_voices(&staff_content, variables)?;
+                if !voices.is_empty() {
+                    staves.push(Staff::new_drums(voices));
                 }
             }
         }
@@ -170,10 +277,20 @@ impl LilyPondParser {
             let var_ref_re = regex::Regex::new(r"\\([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
             for caps in var_ref_re.captures_iter(simultaneous_content) {
                 let var_name = caps.get(1).unwrap().as_str();
-                if let Some(var_content) = variables.get(var_name) {
-                    let notes = self.parse_notes_from_section(var_content)?;
-                    if !notes.is_empty() {
-                        staves.push(Staff { notes });
+                if let Some(var_kind) = variables.get(var_name) {
+                    match var_kind {
+                        VariableKind::Pitched(content) => {
+                            let notes = self.parse_notes_from_section(content)?;
+                            if !notes.is_empty() {
+                                staves.push(Staff::new_pitched(notes));
+                            }
+                        }
+                        VariableKind::Drums(content) => {
+                            let hits = self.parse_drums_from_section(content)?;
+                            if !hits.is_empty() {
+                                staves.push(Staff::new_drums(vec![hits]));
+                            }
+                        }
                     }
                 }
             }
@@ -186,7 +303,18 @@ impl LilyPondParser {
         }
     }
 
-    fn resolve_variables(&self, content: &str, variables: &HashMap<String, String>) -> String {
+    fn is_drum_content(&self, content: &str, variables: &HashMap<String, VariableKind>) -> bool {
+        let var_ref_re = regex::Regex::new(r"\\([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
+        for caps in var_ref_re.captures_iter(content) {
+            let var_name = caps.get(1).unwrap().as_str();
+            if let Some(VariableKind::Drums(_)) = variables.get(var_name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn resolve_variables(&self, content: &str, variables: &HashMap<String, VariableKind>) -> String {
         let mut result = content.to_string();
         let var_ref_re = regex::Regex::new(r"\\([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
 
@@ -196,9 +324,12 @@ impl LilyPondParser {
             let new_result = var_ref_re
                 .replace_all(&result, |caps: &regex::Captures| {
                     let var_name = caps.get(1).unwrap().as_str();
-                    if let Some(var_content) = variables.get(var_name) {
+                    if let Some(var_kind) = variables.get(var_name) {
                         changed = true;
-                        var_content.clone()
+                        match var_kind {
+                            VariableKind::Pitched(s) => s.clone(),
+                            VariableKind::Drums(s) => s.clone(),
+                        }
                     } else {
                         caps.get(0).unwrap().as_str().to_string()
                     }
@@ -225,6 +356,129 @@ impl LilyPondParser {
         }
 
         Ok(notes)
+    }
+
+    fn parse_drums_from_section(&self, section: &str) -> Result<Vec<DrumHit>, String> {
+        let mut hits = Vec::new();
+        let tokens = self.tokenize(section);
+
+        for token in tokens {
+            if let Some(hit) = self.parse_drum_hit(&token) {
+                hits.push(hit);
+            }
+        }
+
+        Ok(hits)
+    }
+
+    fn parse_drum_voices(
+        &self,
+        staff_content: &str,
+        variables: &HashMap<String, VariableKind>,
+    ) -> Result<Vec<Vec<DrumHit>>, String> {
+        let mut voices = Vec::new();
+
+        // Check if there's a << >> block inside the DrumStaff
+        if let (Some(sim_start), Some(sim_end)) = (staff_content.find("<<"), staff_content.rfind(">>")) {
+            if sim_start < sim_end {
+                let simultaneous = &staff_content[sim_start + 2..sim_end];
+
+                // Find all \new DrumVoice blocks
+                let voice_re = regex::Regex::new(r"\\new\s+DrumVoice\s*\{").unwrap();
+                for caps in voice_re.captures_iter(simultaneous) {
+                    let full_match = caps.get(0).unwrap();
+                    let brace_pos = simultaneous[..full_match.end()].rfind('{').unwrap();
+
+                    if let Some(voice_content) = self.extract_braced_content(simultaneous, brace_pos) {
+                        let resolved = self.resolve_variables(&voice_content, variables);
+                        let hits = self.parse_drums_from_section(&resolved)?;
+                        if !hits.is_empty() {
+                            voices.push(hits);
+                        }
+                    }
+                }
+
+                // If no DrumVoice blocks, look for direct variable references
+                if voices.is_empty() {
+                    let var_ref_re = regex::Regex::new(r"\\([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
+                    for caps in var_ref_re.captures_iter(simultaneous) {
+                        let var_name = caps.get(1).unwrap().as_str();
+                        if let Some(VariableKind::Drums(content)) = variables.get(var_name) {
+                            let hits = self.parse_drums_from_section(content)?;
+                            if !hits.is_empty() {
+                                voices.push(hits);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: parse the whole content as a single voice
+        if voices.is_empty() {
+            let resolved = self.resolve_variables(staff_content, variables);
+            let hits = self.parse_drums_from_section(&resolved)?;
+            if !hits.is_empty() {
+                voices.push(hits);
+            }
+        }
+
+        Ok(voices)
+    }
+
+    fn parse_drum_hit(&self, token: &str) -> Option<DrumHit> {
+        let token = token.trim();
+
+        // Skip bar lines and commands
+        if token.starts_with('|') || token.starts_with('\\') {
+            return None;
+        }
+
+        // Common LilyPond drum names
+        let drum_names = [
+            "bd", "sn", "hh", "hhc", "hho", "hhp", "hh", "cymc", "cymr", "cymca", "cymcb",
+            "tom", "tomh", "tomm", "toml", "tomfl", "tomfh",
+            "cb", "cl", "cp", "cr", "gui", "hc", "lc",
+            "mc", "rc", "ride", "rb", "ss", "tamb", "tri", "whl", "whs",
+            "pedalhihat", "hihat", "openhat", "closehat",
+        ];
+
+        let mut chars = token.chars().peekable();
+        let mut name = String::new();
+
+        // Read drum name (alphabetic characters)
+        while let Some(&c) = chars.peek() {
+            if c.is_alphabetic() {
+                name.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        // Check if it's a valid drum name
+        if !drum_names.contains(&name.as_str()) {
+            return None;
+        }
+
+        // Parse duration
+        let mut duration_str = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_numeric() {
+                duration_str.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        let duration = if duration_str.is_empty() {
+            4
+        } else {
+            duration_str.parse::<u32>().unwrap_or(4)
+        };
+
+        Some(DrumHit { name, duration })
     }
 
     fn expand_repeats(&self, code: &str) -> String {
@@ -393,7 +647,11 @@ impl Default for LilyPondParser {
 pub struct StrudelGenerator;
 
 impl StrudelGenerator {
-    pub fn generate_staff(notes: &[Note], tempo: Option<&Tempo>) -> String {
+    fn calculate_cpm(total_beats: f64, tempo: Option<&Tempo>) -> Option<f64> {
+        tempo.map(|t| t.bpm as f64 / total_beats)
+    }
+
+    pub fn generate_pitched_staff(notes: &[Note], tempo: Option<&Tempo>) -> String {
         if notes.is_empty() {
             return String::from("// No notes to convert");
         }
@@ -420,20 +678,90 @@ impl StrudelGenerator {
             note_sequence.join(" ")
         );
 
-        if let Some(t) = tempo {
-            // Calculate total beats in pattern (sum of weights, where weight = 4/duration)
-            let total_beats: f64 = notes.iter().map(|n| 4.0 / n.duration as f64).sum();
-            // cpm = beats per minute / beats per cycle
-            let cpm = t.bpm as f64 / total_beats;
+        let total_beats: f64 = notes.iter().map(|n| 4.0 / n.duration as f64).sum();
+        if let Some(cpm) = Self::calculate_cpm(total_beats, tempo) {
             format!("{base}\n  .cpm({cpm})")
         } else {
             base
         }
     }
 
+    fn generate_single_drum_voice(hits: &[DrumHit], tempo: Option<&Tempo>) -> String {
+        let hit_sequence: Vec<String> = hits
+            .iter()
+            .map(|h| {
+                let weight = 4.0 / h.duration as f32;
+                if weight == 1.0 {
+                    h.name.clone()
+                } else {
+                    format!("{}@{}", h.name, weight)
+                }
+            })
+            .collect();
+
+        let base = format!("sound(\"{}\")", hit_sequence.join(" "));
+
+        let total_beats: f64 = hits.iter().map(|h| 4.0 / h.duration as f64).sum();
+        if let Some(cpm) = Self::calculate_cpm(total_beats, tempo) {
+            format!("{base}\n  .cpm({cpm})")
+        } else {
+            base
+        }
+    }
+
+    pub fn generate_drum_staff(voices: &[Vec<DrumHit>], tempo: Option<&Tempo>) -> String {
+        if voices.is_empty() {
+            return String::from("// No drum hits to convert");
+        }
+
+        if voices.len() == 1 {
+            return Self::generate_single_drum_voice(&voices[0], tempo);
+        }
+
+        // Multiple voices: use stack()
+        let voice_patterns: Vec<String> = voices
+            .iter()
+            .map(|hits| {
+                let hit_sequence: Vec<String> = hits
+                    .iter()
+                    .map(|h| {
+                        let weight = 4.0 / h.duration as f32;
+                        if weight == 1.0 {
+                            h.name.clone()
+                        } else {
+                            format!("{}@{}", h.name, weight)
+                        }
+                    })
+                    .collect();
+                format!("sound(\"{}\")", hit_sequence.join(" "))
+            })
+            .collect();
+
+        let stacked = format!("stack(\n  {},\n)", voice_patterns.join(",\n  "));
+
+        // Use the longest voice to calculate cpm
+        let max_beats: f64 = voices
+            .iter()
+            .map(|hits| hits.iter().map(|h| 4.0 / h.duration as f64).sum())
+            .fold(0.0, f64::max);
+
+        if let Some(cpm) = Self::calculate_cpm(max_beats, tempo) {
+            format!("{stacked}\n  .cpm({cpm})")
+        } else {
+            stacked
+        }
+    }
+
+    pub fn generate_staff(staff: &Staff, tempo: Option<&Tempo>) -> String {
+        match &staff.content {
+            StaffContent::Notes(notes) => Self::generate_pitched_staff(notes, tempo),
+            StaffContent::Drums(hits) => Self::generate_drum_staff(hits, tempo),
+        }
+    }
+
     /// Generate Strudel code for a single staff (backwards compatibility)
     pub fn generate(notes: &[Note], tempo: Option<&Tempo>) -> String {
-        Self::generate_staff(notes, tempo)
+        Self::generate_pitched_staff(notes, tempo)
     }
 
     /// Generate Strudel code for multiple staves
@@ -444,7 +772,7 @@ impl StrudelGenerator {
 
         staves
             .iter()
-            .map(|staff| format!("$: {}", Self::generate_staff(&staff.notes, tempo)))
+            .map(|staff| format!("$: {}", Self::generate_staff(staff, tempo)))
             .collect::<Vec<_>>()
             .join("\n\n")
     }

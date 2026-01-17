@@ -36,8 +36,19 @@ fn main() {
 
     match parser.parse(&input) {
         Ok(result) => {
-            let total_notes: usize = result.staves.iter().map(|s| s.notes.len()).sum();
-            eprintln!("Parsed {} staves, {} notes total", result.staves.len(), total_notes);
+            let pitched_count: usize = result.staves.iter()
+                .filter_map(|s| s.notes())
+                .map(|n| n.len())
+                .sum();
+            let drum_count: usize = result.staves.iter()
+                .filter_map(|s| s.drums())
+                .flat_map(|voices| voices.iter())
+                .map(|voice| voice.len())
+                .sum();
+            eprintln!(
+                "Parsed {} staves ({} notes, {} drum hits)",
+                result.staves.len(), pitched_count, drum_count
+            );
             if let Some(ref tempo) = result.tempo {
                 eprintln!("Tempo: {} = {} BPM", tempo.beat_unit, tempo.bpm);
             }

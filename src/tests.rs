@@ -138,36 +138,148 @@ voiceb = { e'4 f'4 }
     let result = parser.parse(code).unwrap();
 
     assert_eq!(result.staves.len(), 2);
-    assert_eq!(result.staves[0].notes.len(), 2);
-    assert_eq!(result.staves[0].notes[0].name, 'c');
-    assert_eq!(result.staves[1].notes.len(), 2);
-    assert_eq!(result.staves[1].notes[0].name, 'e');
+    assert_eq!(result.staves[0].notes().unwrap().len(), 2);
+    assert_eq!(result.staves[0].notes().unwrap()[0].name, 'c');
+    assert_eq!(result.staves[1].notes().unwrap().len(), 2);
+    assert_eq!(result.staves[1].notes().unwrap()[0].name, 'e');
 }
 
 #[test]
 fn test_generate_multi_staff() {
     let staves = vec![
-        Staff {
-            notes: vec![Note {
-                name: 'c',
-                octave: 4,
-                accidental: None,
-                duration: 4,
-                midi: 60,
-            }],
-        },
-        Staff {
-            notes: vec![Note {
-                name: 'e',
-                octave: 4,
-                accidental: None,
-                duration: 4,
-                midi: 64,
-            }],
-        },
+        Staff::new_pitched(vec![Note {
+            name: 'c',
+            octave: 4,
+            accidental: None,
+            duration: 4,
+            midi: 60,
+        }]),
+        Staff::new_pitched(vec![Note {
+            name: 'e',
+            octave: 4,
+            accidental: None,
+            duration: 4,
+            midi: 64,
+        }]),
     ];
 
     let strudel = StrudelGenerator::generate_multi(&staves, None);
     assert!(strudel.contains("$: note(\"c4\")"));
     assert!(strudel.contains("$: note(\"e4\")"));
+}
+
+#[test]
+fn test_parse_drum_staff() {
+    let parser = LilyPondParser::new();
+    let code = r#"
+mydrums = \drummode { bd4 hh4 sn4 hh4 }
+
+\score {
+  <<
+    \new DrumStaff { \mydrums }
+  >>
+}
+"#;
+    let result = parser.parse(code).unwrap();
+
+    assert_eq!(result.staves.len(), 1);
+    let voices = result.staves[0].drums().unwrap();
+    assert_eq!(voices.len(), 1);
+    assert_eq!(voices[0].len(), 4);
+    assert_eq!(voices[0][0].name, "bd");
+    assert_eq!(voices[0][1].name, "hh");
+    assert_eq!(voices[0][2].name, "sn");
+    assert_eq!(voices[0][3].name, "hh");
+}
+
+#[test]
+fn test_generate_drum_staff() {
+    let voices = vec![vec![
+        DrumHit { name: "bd".to_string(), duration: 4 },
+        DrumHit { name: "hh".to_string(), duration: 4 },
+    ]];
+
+    let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
+    assert!(strudel.contains("sound(\"bd hh\")"));
+}
+
+#[test]
+fn test_parse_multi_voice_drum_staff() {
+    let parser = LilyPondParser::new();
+    let code = r#"
+kicks = \drummode { bd4 bd4 }
+hats = \drummode { hh8 hh8 hh8 hh8 }
+
+\score {
+  <<
+    \new DrumStaff {
+      <<
+        \new DrumVoice { \kicks }
+        \new DrumVoice { \hats }
+      >>
+    }
+  >>
+}
+"#;
+    let result = parser.parse(code).unwrap();
+
+    assert_eq!(result.staves.len(), 1);
+    let voices = result.staves[0].drums().unwrap();
+    assert_eq!(voices.len(), 2);
+    assert_eq!(voices[0][0].name, "bd");
+    assert_eq!(voices[1][0].name, "hh");
+}
+
+#[test]
+fn test_generate_multi_voice_drum_staff() {
+    let voices = vec![
+        vec![DrumHit { name: "bd".to_string(), duration: 4 }],
+        vec![DrumHit { name: "hh".to_string(), duration: 8 }],
+    ];
+
+    let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
+    assert!(strudel.contains("stack("));
+    assert!(strudel.contains("sound(\"bd\")"));
+    assert!(strudel.contains("sound(\"hh@0.5\")"));
+}
+
+#[test]
+fn test_mixed_pitched_and_drum_staves() {
+    let parser = LilyPondParser::new();
+    let code = r#"
+voice = { c'4 d'4 }
+drums = \drummode { bd4 sn4 }
+
+\score {
+  <<
+    \new Staff { \voice }
+    \new DrumStaff { \drums }
+  >>
+}
+"#;
+    let result = parser.parse(code).unwrap();
+
+    assert_eq!(result.staves.len(), 2);
+    assert!(result.staves[0].notes().is_some());
+    assert!(result.staves[1].drums().is_some());
+}
+
+#[test]
+fn test_generate_mixed_staves() {
+    let staves = vec![
+        Staff::new_pitched(vec![Note {
+            name: 'c',
+            octave: 4,
+            accidental: None,
+            duration: 4,
+            midi: 60,
+        }]),
+        Staff::new_drums(vec![vec![
+            DrumHit { name: "bd".to_string(), duration: 4 },
+        ]]),
+    ];
+
+    let strudel = StrudelGenerator::generate_multi(&staves, None);
+    assert!(strudel.contains("$: note(\"c4\")"));
+    assert!(strudel.contains("$: sound(\"bd\")"));
 }
