@@ -39,6 +39,7 @@ pub enum DrumEvent {
 pub struct DrumVoiceData {
     pub events: Vec<DrumEvent>,
     pub punchcard_color: Option<String>,
+    pub gain: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +66,7 @@ pub struct Staff {
     pub kind: StaffKind,
     pub content: StaffContent,
     pub punchcard_color: Option<String>,
+    pub gain: Option<String>,
 }
 
 impl Staff {
@@ -73,14 +75,20 @@ impl Staff {
             kind: StaffKind::Pitched,
             content: StaffContent::Notes(events),
             punchcard_color: None,
+            gain: None,
         }
     }
 
-    pub fn new_pitched_with_punchcard(events: Vec<PitchedEvent>, color: String) -> Self {
+    pub fn new_pitched_with_options(
+        events: Vec<PitchedEvent>,
+        punchcard_color: Option<String>,
+        gain: Option<String>,
+    ) -> Self {
         Staff {
             kind: StaffKind::Pitched,
             content: StaffContent::Notes(events),
-            punchcard_color: Some(color),
+            punchcard_color,
+            gain,
         }
     }
 
@@ -89,6 +97,7 @@ impl Staff {
             kind: StaffKind::Drums,
             content: StaffContent::Drums(voices),
             punchcard_color: None,
+            gain: None,
         }
     }
 
@@ -222,6 +231,12 @@ impl LilyPondParser {
         re.captures(content).map(|caps| caps.get(1).unwrap().as_str().to_string())
     }
 
+    fn parse_gain(&self, content: &str) -> Option<String> {
+        // Look for % @strudel-of-lilypond@ gain <value> comment
+        let re = regex::Regex::new(r"%\s*@strudel-of-lilypond@\s+gain\s+([\d.]+)").unwrap();
+        re.captures(content).map(|caps| caps.get(1).unwrap().as_str().to_string())
+    }
+
     fn extract_braced_content(&self, code: &str, brace_start: usize) -> Option<String> {
         let mut depth = 1;
 
@@ -286,21 +301,19 @@ impl LilyPondParser {
                 self.extract_braced_content(simultaneous_content, brace_pos)
             {
                 let punchcard_color = self.parse_punchcard_color(&staff_content);
+                let gain = self.parse_gain(&staff_content);
                 let resolved = self.resolve_variables(&staff_content, variables);
                 // Check if resolved content is from a drum variable
                 if self.is_drum_content(&staff_content, variables) {
                     let hits = self.parse_drums_from_section(&resolved)?;
                     if !hits.is_empty() {
-                        let voice_data = DrumVoiceData { events: hits, punchcard_color };
+                        let voice_data = DrumVoiceData { events: hits, punchcard_color, gain };
                         staves.push(Staff::new_drums(vec![voice_data]));
                     }
                 } else {
                     let notes = self.parse_notes_from_section(&resolved)?;
                     if !notes.is_empty() {
-                        let staff = match punchcard_color {
-                            Some(color) => Staff::new_pitched_with_punchcard(notes, color),
-                            None => Staff::new_pitched(notes),
-                        };
+                        let staff = Staff::new_pitched_with_options(notes, punchcard_color, gain);
                         staves.push(staff);
                     }
                 }
@@ -341,7 +354,7 @@ impl LilyPondParser {
                         VariableKind::Drums(content) => {
                             let hits = self.parse_drums_from_section(content)?;
                             if !hits.is_empty() {
-                                let voice_data = DrumVoiceData { events: hits, punchcard_color: None };
+                                let voice_data = DrumVoiceData { events: hits, punchcard_color: None, gain: None };
                                 staves.push(Staff::new_drums(vec![voice_data]));
                             }
                         }
@@ -463,10 +476,11 @@ impl LilyPondParser {
 
                     if let Some(voice_content) = self.extract_braced_content(simultaneous, brace_pos) {
                         let punchcard_color = self.parse_punchcard_color(&voice_content);
+                        let gain = self.parse_gain(&voice_content);
                         let resolved = self.resolve_variables(&voice_content, variables);
                         let events = self.parse_drums_from_section(&resolved)?;
                         if !events.is_empty() {
-                            voices.push(DrumVoiceData { events, punchcard_color });
+                            voices.push(DrumVoiceData { events, punchcard_color, gain });
                         }
                     }
                 }
@@ -479,7 +493,7 @@ impl LilyPondParser {
                         if let Some(VariableKind::Drums(content)) = variables.get(var_name) {
                             let events = self.parse_drums_from_section(content)?;
                             if !events.is_empty() {
-                                voices.push(DrumVoiceData { events, punchcard_color: None });
+                                voices.push(DrumVoiceData { events, punchcard_color: None, gain: None });
                             }
                         }
                     }
@@ -492,7 +506,7 @@ impl LilyPondParser {
             let resolved = self.resolve_variables(staff_content, variables);
             let events = self.parse_drums_from_section(&resolved)?;
             if !events.is_empty() {
-                voices.push(DrumVoiceData { events, punchcard_color: None });
+                voices.push(DrumVoiceData { events, punchcard_color: None, gain: None });
             }
         }
 
@@ -982,13 +996,14 @@ impl StrudelGenerator {
     }
 
     pub fn generate_pitched_staff(events: &[PitchedEvent], tempo: Option<&Tempo>) -> String {
-        Self::generate_pitched_staff_with_options(events, tempo, &None)
+        Self::generate_pitched_staff_with_options(events, tempo, &None, &None)
     }
 
     fn generate_pitched_staff_with_options(
         events: &[PitchedEvent],
         tempo: Option<&Tempo>,
         punchcard_color: &Option<String>,
+        gain: &Option<String>,
     ) -> String {
         let notes: Vec<&Note> = events
             .iter()
@@ -1005,14 +1020,19 @@ impl StrudelGenerator {
         let mut idx = 0;
         let pattern = Self::generate_pitched_pattern(events, &mut idx);
 
-        let punchcard_str = match punchcard_color {
-            Some(color) => format!(".color(\"{}\")._punchcard()", color),
-            None => String::new(),
-        };
+        // Build modifiers with newlines
+        let mut modifiers = String::new();
+        if let Some(g) = gain {
+            modifiers.push_str(&format!("\n.gain({})", g));
+        }
+        if let Some(color) = punchcard_color {
+            modifiers.push_str(&format!("\n.color(\"{}\")", color));
+            modifiers.push_str("\n._punchcard()");
+        }
 
         let base = format!(
             "note(\"{}\"){}\n  .s(\"piano\")",
-            pattern, punchcard_str
+            pattern, modifiers
         );
 
         let mut beat_idx = 0;
@@ -1087,13 +1107,14 @@ impl StrudelGenerator {
 
     #[allow(dead_code)]
     fn generate_single_drum_voice(events: &[DrumEvent], tempo: Option<&Tempo>) -> String {
-        Self::generate_single_drum_voice_with_options(events, tempo, &String::new())
+        Self::generate_single_drum_voice_with_options(events, tempo, &None, &None)
     }
 
     fn generate_single_drum_voice_with_options(
         events: &[DrumEvent],
         tempo: Option<&Tempo>,
-        punchcard_str: &str,
+        punchcard_color: &Option<String>,
+        gain: &Option<String>,
     ) -> String {
         let hits: Vec<&DrumHit> = events
             .iter()
@@ -1114,13 +1135,35 @@ impl StrudelGenerator {
         let mut beat_idx = 0;
         let total_beats = Self::calculate_drum_beats(events, &mut beat_idx);
 
-        let with_punchcard = format!("{}{}", base, punchcard_str);
+        // Build modifiers with newlines
+        let mut modifiers = String::new();
+        if let Some(g) = gain {
+            modifiers.push_str(&format!("\n.gain({})", g));
+        }
+        if let Some(color) = punchcard_color {
+            modifiers.push_str(&format!("\n.color(\"{}\")", color));
+            modifiers.push_str("\n._punchcard()");
+        }
+
+        let with_modifiers = format!("{}{}", base, modifiers);
 
         if let Some(cpm) = Self::calculate_cpm(total_beats, tempo) {
-            format!("{with_punchcard}\n  .cpm({cpm})")
+            format!("{with_modifiers}\n  .cpm({cpm})")
         } else {
-            with_punchcard
+            with_modifiers
         }
+    }
+
+    fn format_voice_modifiers(punchcard_color: &Option<String>, gain: &Option<String>) -> String {
+        let mut modifiers = String::new();
+        if let Some(g) = gain {
+            modifiers.push_str(&format!("\n  .gain({})", g));
+        }
+        if let Some(color) = punchcard_color {
+            modifiers.push_str(&format!("\n  .color(\"{}\")", color));
+            modifiers.push_str("\n  ._punchcard()");
+        }
+        modifiers
     }
 
     pub fn generate_drum_staff(voices: &[DrumVoiceData], tempo: Option<&Tempo>) -> String {
@@ -1130,11 +1173,12 @@ impl StrudelGenerator {
 
         if voices.len() == 1 {
             let voice = &voices[0];
-            let punchcard_str = match &voice.punchcard_color {
-                Some(color) => format!(".color(\"{}\")._punchcard()", color),
-                None => String::new(),
-            };
-            return Self::generate_single_drum_voice_with_options(&voice.events, tempo, &punchcard_str);
+            return Self::generate_single_drum_voice_with_options(
+                &voice.events,
+                tempo,
+                &voice.punchcard_color,
+                &voice.gain,
+            );
         }
 
         // Multiple voices: use stack() with per-voice punchcard
@@ -1143,11 +1187,8 @@ impl StrudelGenerator {
             .map(|voice| {
                 let mut idx = 0;
                 let pattern = Self::generate_drum_pattern(&voice.events, &mut idx);
-                let punchcard_str = match &voice.punchcard_color {
-                    Some(color) => format!(".color(\"{}\")._punchcard()", color),
-                    None => String::new(),
-                };
-                format!("sound(\"{}\"){}", pattern, punchcard_str)
+                let modifiers = Self::format_voice_modifiers(&voice.punchcard_color, &voice.gain);
+                format!("sound(\"{}\"){}", pattern, modifiers)
             })
             .collect();
 
@@ -1172,7 +1213,7 @@ impl StrudelGenerator {
     pub fn generate_staff(staff: &Staff, tempo: Option<&Tempo>) -> String {
         match &staff.content {
             StaffContent::Notes(events) => {
-                Self::generate_pitched_staff_with_options(events, tempo, &staff.punchcard_color)
+                Self::generate_pitched_staff_with_options(events, tempo, &staff.punchcard_color, &staff.gain)
             }
             StaffContent::Drums(voices) => Self::generate_drum_staff(voices, tempo),
         }

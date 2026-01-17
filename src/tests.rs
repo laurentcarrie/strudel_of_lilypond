@@ -231,6 +231,7 @@ fn test_generate_drum_staff() {
             DrumEvent::Hit(DrumHit { name: "hh".to_string(), duration: 4 }),
         ],
         punchcard_color: None,
+        gain: None,
     }];
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
@@ -278,10 +279,12 @@ fn test_generate_multi_voice_drum_staff() {
         DrumVoiceData {
             events: vec![DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 })],
             punchcard_color: None,
+            gain: None,
         },
         DrumVoiceData {
             events: vec![DrumEvent::Hit(DrumHit { name: "hh".to_string(), duration: 8 })],
             punchcard_color: None,
+            gain: None,
         },
     ];
 
@@ -326,6 +329,7 @@ fn test_generate_mixed_staves() {
         Staff::new_drums(vec![DrumVoiceData {
             events: vec![DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 })],
             punchcard_color: None,
+            gain: None,
         }]),
     ];
 

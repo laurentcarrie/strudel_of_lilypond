@@ -61,15 +61,20 @@ Generates Strudel patterns:
 - Accidentals: `is` (sharp), `es` (flat) - e.g., `cis` = C#, `des` = Db
 - Octave: `'` raises octave, `,` lowers octave (middle C = `c'`)
 - Duration: number after note (4 = quarter, 8 = eighth, 2 = half, 1 = whole)
-- Rests (`r`) and bar lines (`|`) are skipped
+- Rests: `r` → `~`, `r2` → `~ ~` (half rest = two quarter rests)
+- Bar lines (`|`) are skipped
 
-## Punchcard Visualization
+## Strudel Modifiers
 
-Add a special comment inside a staff or voice to enable Strudel's punchcard visualization:
+Add special comments inside a staff or voice to control Strudel output:
+
+- `% @strudel-of-lilypond@ <color> punchcard` - Enable punchcard visualization with color
+- `% @strudel-of-lilypond@ gain <value>` - Set gain/volume
 
 ```lilypond
 \new TabStaff {
   % @strudel-of-lilypond@ red punchcard
+  % @strudel-of-lilypond@ gain 2
   \voicea
 }
 
@@ -80,21 +85,25 @@ Add a special comment inside a staff or voice to enable Strudel's punchcard visu
       \kicks
     }
     \new DrumVoice {
-      % @strudel-of-lilypond@ blue punchcard
       \hats
     }
   >>
 }
 ```
 
-This generates Strudel code with `.color("<color>")._punchcard()` appended:
+This generates Strudel code with the specified modifiers:
 
 ```javascript
-$: note("c4 d4 e4").color("red")._punchcard()
+$: note("c4 d4 e4")
+.gain(2)
+.color("red")
+._punchcard()
   .s("piano")
 
 $: stack(
-  sound("bd bd").color("cyan")._punchcard(),
-  sound("hh hh hh hh").color("blue")._punchcard(),
+  sound("bd bd")
+  .color("cyan")
+  ._punchcard(),
+  sound("hh hh hh hh"),
 )
 ```
