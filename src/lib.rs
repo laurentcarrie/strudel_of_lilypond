@@ -245,8 +245,9 @@ impl LilyPondParser {
 
     fn parse_pan(&self, content: &str) -> Option<String> {
         // Look for % @strudel-of-lilypond@ pan <value> comment
-        let re = regex::Regex::new(r"%\s*@strudel-of-lilypond@\s+pan\s+([\d.]+)").unwrap();
-        re.captures(content).map(|caps| caps.get(1).unwrap().as_str().to_string())
+        // Value can be a number (0.5) or a Strudel pattern (<0 .5 1>)
+        let re = regex::Regex::new(r"%\s*@strudel-of-lilypond@\s+pan\s+([^\n]+)").unwrap();
+        re.captures(content).map(|caps| caps.get(1).unwrap().as_str().trim().to_string())
     }
 
     fn extract_braced_content(&self, code: &str, brace_start: usize) -> Option<String> {
@@ -914,6 +915,15 @@ impl StrudelGenerator {
         format!("{}{}{}", n.name, acc, n.octave)
     }
 
+    /// Format pan value - wrap in quotes if it's a Strudel pattern
+    fn format_pan(value: &str) -> String {
+        if value.contains('<') {
+            format!("\"{}\"", value)
+        } else {
+            value.to_string()
+        }
+    }
+
     fn format_pitched_note(n: &Note) -> String {
         let weight = 4.0 / n.duration as f32;
 
@@ -1041,7 +1051,7 @@ impl StrudelGenerator {
             modifiers.push_str(&format!("\n.gain({})", g));
         }
         if let Some(p) = pan {
-            modifiers.push_str(&format!("\n.pan({})", p));
+            modifiers.push_str(&format!("\n.pan({})", Self::format_pan(p)));
         }
         if let Some(color) = punchcard_color {
             modifiers.push_str(&format!("\n.color(\"{}\")", color));
@@ -1160,7 +1170,7 @@ impl StrudelGenerator {
             modifiers.push_str(&format!("\n.gain({})", g));
         }
         if let Some(p) = pan {
-            modifiers.push_str(&format!("\n.pan({})", p));
+            modifiers.push_str(&format!("\n.pan({})", Self::format_pan(p)));
         }
         if let Some(color) = punchcard_color {
             modifiers.push_str(&format!("\n.color(\"{}\")", color));
@@ -1182,7 +1192,7 @@ impl StrudelGenerator {
             modifiers.push_str(&format!("\n  .gain({})", g));
         }
         if let Some(p) = pan {
-            modifiers.push_str(&format!("\n  .pan({})", p));
+            modifiers.push_str(&format!("\n  .pan({})", Self::format_pan(p)));
         }
         if let Some(color) = punchcard_color {
             modifiers.push_str(&format!("\n  .color(\"{}\")", color));

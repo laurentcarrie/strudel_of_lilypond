@@ -439,3 +439,28 @@ voice = { c'4 d'4 }
     assert!(strudel.contains(".pan(0.25)"));
 }
 
+#[test]
+fn test_pan_pattern() {
+    let parser = LilyPondParser::new();
+    let code = r#"
+voice = { c'4 d'4 }
+
+\score {
+  <<
+    \new Staff {
+      % @strudel-of-lilypond@ pan <0 .5 1>
+      \voice
+    }
+  >>
+}
+"#;
+    let result = parser.parse(code).unwrap();
+
+    assert_eq!(result.staves.len(), 1);
+    assert_eq!(result.staves[0].pan, Some("<0 .5 1>".to_string()));
+
+    let strudel = StrudelGenerator::generate_staff(&result.staves[0], None);
+    // Patterns should be wrapped in quotes
+    assert!(strudel.contains(".pan(\"<0 .5 1>\")"));
+}
+

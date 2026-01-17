@@ -84,6 +84,7 @@ Add special comments inside a staff or voice to control Strudel output:
   <<
     \new DrumVoice {
       % @strudel-of-lilypond@ cyan punchcard
+      % @strudel-of-lilypond@ pan <0 .5 1>
       \kicks
     }
     \new DrumVoice {
