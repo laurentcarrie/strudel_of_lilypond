@@ -104,15 +104,21 @@ fn test_generate_without_tempo() {
 }
 
 #[test]
-fn test_repeat_expansion() {
+fn test_repeat_structure() {
     let parser = LilyPondParser::new();
     let code = r#"{ \repeat unfold 3 { c'4 d'4 } }"#;
     let result = parser.parse(code).unwrap();
 
+    // notes() returns unique notes only (not expanded)
     let notes = result.notes();
-    assert_eq!(notes.len(), 6);
+    assert_eq!(notes.len(), 2);
     assert_eq!(notes[0].name, 'c');
     assert_eq!(notes[1].name, 'd');
+
+    // Check that the generated output uses *3 syntax
+    let events = result.staves[0].events().unwrap();
+    let strudel = StrudelGenerator::generate_pitched_staff(events, None);
+    assert!(strudel.contains("[c5 d5]*3"));
 }
 
 #[test]
@@ -121,7 +127,13 @@ fn test_nested_repeat() {
     let code = r#"{ \repeat unfold 2 { \repeat unfold 2 { c'4 } } }"#;
     let result = parser.parse(code).unwrap();
 
-    assert_eq!(result.notes().len(), 4);
+    // Only 1 unique note
+    assert_eq!(result.notes().len(), 1);
+
+    // Check nested repeat syntax
+    let events = result.staves[0].events().unwrap();
+    let strudel = StrudelGenerator::generate_pitched_staff(events, None);
+    assert!(strudel.contains("[c5]*2]*2") || strudel.contains("[[c5]*2]*2"));
 }
 
 #[test]
@@ -141,31 +153,41 @@ voiceb = { e'4 f'4 }
     let result = parser.parse(code).unwrap();
 
     assert_eq!(result.staves.len(), 2);
-    assert_eq!(result.staves[0].notes().unwrap().len(), 2);
-    assert_eq!(result.staves[0].notes().unwrap()[0].name, 'c');
-    assert_eq!(result.staves[1].notes().unwrap().len(), 2);
-    assert_eq!(result.staves[1].notes().unwrap()[0].name, 'e');
+    let events0 = result.staves[0].events().unwrap();
+    let notes0: Vec<_> = events0.iter().filter_map(|e| match e {
+        PitchedEvent::Note(n) => Some(n),
+        _ => None,
+    }).collect();
+    assert_eq!(notes0.len(), 2);
+    assert_eq!(notes0[0].name, 'c');
+    let events1 = result.staves[1].events().unwrap();
+    let notes1: Vec<_> = events1.iter().filter_map(|e| match e {
+        PitchedEvent::Note(n) => Some(n),
+        _ => None,
+    }).collect();
+    assert_eq!(notes1.len(), 2);
+    assert_eq!(notes1[0].name, 'e');
 }
 
 #[test]
 fn test_generate_multi_staff() {
     let staves = vec![
-        Staff::new_pitched(vec![Note {
+        Staff::new_pitched(vec![PitchedEvent::Note(Note {
             name: 'c',
             octave: 4,
             accidental: None,
             duration: 4,
             midi: 60,
             chord_notes: None,
-        }]),
-        Staff::new_pitched(vec![Note {
+        })]),
+        Staff::new_pitched(vec![PitchedEvent::Note(Note {
             name: 'e',
             octave: 4,
             accidental: None,
             duration: 4,
             midi: 64,
             chord_notes: None,
-        }]),
+        })]),
     ];
 
     let strudel = StrudelGenerator::generate_multi(&staves, None);
@@ -188,20 +210,24 @@ mydrums = \drummode { bd4 hh4 sn4 hh4 }
     let result = parser.parse(code).unwrap();
 
     assert_eq!(result.staves.len(), 1);
-    let voices = result.staves[0].drums().unwrap();
+    let voices = result.staves[0].drum_events().unwrap();
     assert_eq!(voices.len(), 1);
-    assert_eq!(voices[0].len(), 4);
-    assert_eq!(voices[0][0].name, "bd");
-    assert_eq!(voices[0][1].name, "hh");
-    assert_eq!(voices[0][2].name, "sd");  // sn -> sd in Strudel
-    assert_eq!(voices[0][3].name, "hh");
+    let hits: Vec<_> = voices[0].iter().filter_map(|e| match e {
+        DrumEvent::Hit(h) => Some(h),
+        _ => None,
+    }).collect();
+    assert_eq!(hits.len(), 4);
+    assert_eq!(hits[0].name, "bd");
+    assert_eq!(hits[1].name, "hh");
+    assert_eq!(hits[2].name, "sd");  // sn -> sd in Strudel
+    assert_eq!(hits[3].name, "hh");
 }
 
 #[test]
 fn test_generate_drum_staff() {
     let voices = vec![vec![
-        DrumHit { name: "bd".to_string(), duration: 4 },
-        DrumHit { name: "hh".to_string(), duration: 4 },
+        DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 }),
+        DrumEvent::Hit(DrumHit { name: "hh".to_string(), duration: 4 }),
     ]];
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
@@ -229,17 +255,25 @@ hats = \drummode { hh8 hh8 hh8 hh8 }
     let result = parser.parse(code).unwrap();
 
     assert_eq!(result.staves.len(), 1);
-    let voices = result.staves[0].drums().unwrap();
+    let voices = result.staves[0].drum_events().unwrap();
     assert_eq!(voices.len(), 2);
-    assert_eq!(voices[0][0].name, "bd");
-    assert_eq!(voices[1][0].name, "hh");
+    let hits0: Vec<_> = voices[0].iter().filter_map(|e| match e {
+        DrumEvent::Hit(h) => Some(h),
+        _ => None,
+    }).collect();
+    let hits1: Vec<_> = voices[1].iter().filter_map(|e| match e {
+        DrumEvent::Hit(h) => Some(h),
+        _ => None,
+    }).collect();
+    assert_eq!(hits0[0].name, "bd");
+    assert_eq!(hits1[0].name, "hh");
 }
 
 #[test]
 fn test_generate_multi_voice_drum_staff() {
     let voices = vec![
-        vec![DrumHit { name: "bd".to_string(), duration: 4 }],
-        vec![DrumHit { name: "hh".to_string(), duration: 8 }],
+        vec![DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 })],
+        vec![DrumEvent::Hit(DrumHit { name: "hh".to_string(), duration: 8 })],
     ];
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
@@ -265,23 +299,23 @@ drums = \drummode { bd4 sn4 }
     let result = parser.parse(code).unwrap();
 
     assert_eq!(result.staves.len(), 2);
-    assert!(result.staves[0].notes().is_some());
-    assert!(result.staves[1].drums().is_some());
+    assert!(result.staves[0].events().is_some());
+    assert!(result.staves[1].drum_events().is_some());
 }
 
 #[test]
 fn test_generate_mixed_staves() {
     let staves = vec![
-        Staff::new_pitched(vec![Note {
+        Staff::new_pitched(vec![PitchedEvent::Note(Note {
             name: 'c',
             octave: 4,
             accidental: None,
             duration: 4,
             midi: 60,
             chord_notes: None,
-        }]),
+        })]),
         Staff::new_drums(vec![vec![
-            DrumHit { name: "bd".to_string(), duration: 4 },
+            DrumEvent::Hit(DrumHit { name: "bd".to_string(), duration: 4 }),
         ]]),
     ];
 
@@ -347,17 +381,19 @@ fn test_generate_chord() {
 }
 
 #[test]
-fn test_pattern_compression() {
-    // Test single element repetition
+fn test_bar_line_parsed() {
+    // Test that bar lines are parsed (but ignored in output)
     let parser = LilyPondParser::new();
-    let code = "{ c'4 c'4 c'4 c'4 }";
+    let code = "{ c'4 d'4 | e'4 f'4 }";
     let result = parser.parse(code).unwrap();
-    let strudel = StrudelGenerator::generate(&result.notes(), None);
-    assert!(strudel.contains("c5*4"));
 
-    // Test pattern repetition
-    let code2 = "{ c'4 d'4 c'4 d'4 }";
-    let result2 = parser.parse(code2).unwrap();
-    let strudel2 = StrudelGenerator::generate(&result2.notes(), None);
-    assert!(strudel2.contains("[c5 d5]*2"));
+    let events = result.staves[0].events().unwrap();
+    // Should have 4 notes and 1 bar line
+    assert_eq!(events.len(), 5);
+    assert!(matches!(events[2], PitchedEvent::BarLine));
+
+    let strudel = StrudelGenerator::generate_pitched_staff(events, None);
+    // Bar lines are skipped in output
+    assert!(strudel.contains("c5 d5 e5 f5"));
 }
+

@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use strudel_of_lilypond::{LilyPondParser, StrudelGenerator};
+use strudel_of_lilypond::{LilyPondParser, StrudelGenerator, PitchedEvent, DrumEvent};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -37,14 +37,16 @@ fn main() {
     match parser.parse(&input) {
         Ok(result) => {
             let pitched_count: usize = result.staves.iter()
-                .filter_map(|s| s.notes())
-                .map(|n| n.len())
-                .sum();
+                .filter_map(|s| s.events())
+                .flat_map(|events| events.iter())
+                .filter(|e| matches!(e, PitchedEvent::Note(_)))
+                .count();
             let drum_count: usize = result.staves.iter()
-                .filter_map(|s| s.drums())
+                .filter_map(|s| s.drum_events())
                 .flat_map(|voices| voices.iter())
-                .map(|voice| voice.len())
-                .sum();
+                .flat_map(|voice| voice.iter())
+                .filter(|e| matches!(e, DrumEvent::Hit(_)))
+                .count();
             eprintln!(
                 "Parsed {} staves ({} notes, {} drum hits)",
                 result.staves.len(), pitched_count, drum_count
