@@ -14,6 +14,13 @@ cargo install strudel-of-lilypond
 strudel-of-lilypond input.ly    # Creates input.html with embedded Strudel REPL
 ```
 
+## Demo
+
+See the [demo/](./demo/) directory for a complete example with:
+- LilyPond source file with tab staff, drum staff, and multiple voices
+- Generated Strudel REPL output
+- Punchcard visualization, gain, and pan modifiers
+
 ## Build from Source
 
 ```bash
@@ -37,12 +44,15 @@ The codebase is a Rust library (`src/lib.rs`) with a CLI frontend (`src/main.rs`
 ### LilyPondParser
 
 Parses LilyPond notation with support for:
+- **Tempo (required)**: `\tempo 4 = 120` - must be present in input
 - Variable definitions (`voice = { ... }`)
 - Drum mode (`drums = \drummode { ... }`)
 - Score blocks with simultaneous staves (`\score { << ... >> }`)
 - Staff types: `\new Staff`, `\new TabStaff`, `\new DrumStaff`
 - Drum voices: `\new DrumVoice` inside DrumStaff
-- Repeat expansion (`\repeat unfold/percent N { ... }`) → Strudel `*N` syntax
+- Repeat expansion (`\repeat unfold/percent N { ... }`) → Strudel `!N` syntax
+- Bar grouping: each bar is wrapped in `[...]` brackets
+- Multi-bar repeats include duration: `[[[bar1] [bar2]]!2]@4`
 - Notes with accidentals (`is`/`es`), octave markers (`'`/`,`), and durations
 - Chords (`<c e g>4`) → Strudel `[c4,e4,g4]` syntax
 - Punchcard visualization comments (see below)
@@ -57,22 +67,26 @@ Generates Strudel patterns:
 
 ## LilyPond Notation Quick Reference
 
+- **Tempo (required)**: `\tempo 4 = 120` - specifies beat unit and BPM
 - Note names: `c d e f g a b`
 - Accidentals: `is` (sharp), `es` (flat) - e.g., `cis` = C#, `des` = Db
 - Octave: `'` raises octave, `,` lowers octave (middle C = `c'`)
 - Duration: number after note (4 = quarter, 8 = eighth, 2 = half, 1 = whole)
 - Rests: `r` → `~`, `r2` → `~ ~` (half rest = two quarter rests)
-- Bar lines (`|`) are skipped
+- Bar lines (`|`) define bar groupings in output
+- Durations: whole=`@4`, half=`@2`, quarter=(none), eighth=`@0.5`, sixteenth=`@0.25`
 
 ## Strudel Modifiers
 
 Add special comments inside a staff or voice to control Strudel output:
 
 - `% @strudel-of-lilypond@ <color> punchcard` - Enable punchcard visualization with color
-- `% @strudel-of-lilypond@ gain <value>` - Set gain/volume
-- `% @strudel-of-lilypond@ pan <value>` - Set stereo panning (0 = left, 0.5 = center, 1 = right)
+- `% @strudel-of-lilypond@ gain <value>` - Set gain/volume (supports patterns like `<0.5 1 1.5>`)
+- `% @strudel-of-lilypond@ pan <value>` - Set stereo panning (supports patterns like `<0 .5 1>`)
 
 ```lilypond
+\tempo 4 = 60
+
 \new TabStaff {
   % @strudel-of-lilypond@ red punchcard
   % @strudel-of-lilypond@ gain 2
@@ -97,17 +111,30 @@ Add special comments inside a staff or voice to control Strudel output:
 This generates Strudel code with the specified modifiers:
 
 ```javascript
-$: note("c4 d4 e4")
+const tempo = 60;
+
+$: note("[c4 d4 e4]")
 .gain(2)
 .pan(0.25)
 .color("red")
 ._punchcard()
   .s("piano")
+  .cpm(tempo/4/1)
 
 $: stack(
-  sound("bd bd")
+  sound("[[bd bd]]!2")
+  .pan("<0 .5 1>")
   .color("cyan")
   ._punchcard(),
-  sound("hh hh hh hh"),
+  sound("[[hh@0.5 hh@0.5 hh@0.5 hh@0.5]]!2"),
 )
+  .cpm(tempo/4/2)
 ```
+
+### Output Format
+
+- Each bar is wrapped in `[...]` brackets
+- Repeats use `!N` syntax: `[[bar content]]!3`
+- Multi-bar repeats include total duration: `[[[bar1] [bar2]]!2]@4`
+- CPM is calculated as `tempo/4/number_of_bars`
+- The `tempo` constant is defined at the top of the generated code

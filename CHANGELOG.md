@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.0] - 2026-01-19
+
+### Added
+- Drum rest support (`r4` in drummode → `~` in Strudel)
+- Demo directory with example LilyPond file and generated output
+
+### Changed
+- **Breaking**: Tempo is now required. Input must include a `\tempo` directive (e.g., `\tempo 4 = 120`)
+
 ## [0.2.0] - 2026-01-17
 
 ### Added

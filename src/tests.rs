@@ -3,7 +3,8 @@ use crate::*;
 #[test]
 fn test_parse_simple_notes() {
     let parser = LilyPondParser::new();
-    let code = "{ c'4 d'4 e'4 }";
+    let code = r#"\tempo 4 = 120
+    { c'4 d'4 e'4 }"#;
     let result = parser.parse(code).unwrap();
 
     let notes = result.notes();
@@ -13,9 +14,21 @@ fn test_parse_simple_notes() {
 }
 
 #[test]
+fn test_missing_tempo_error() {
+    let parser = LilyPondParser::new();
+    let code = "{ c'4 d'4 e'4 }";
+    let result = parser.parse(code);
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.contains("Missing tempo"));
+}
+
+#[test]
 fn test_parse_with_accidentals() {
     let parser = LilyPondParser::new();
-    let code = "{ cis'4 des'4 }";
+    let code = r#"\tempo 4 = 120
+    { cis'4 des'4 }"#;
     let result = parser.parse(code).unwrap();
 
     let notes = result.notes();
@@ -26,7 +39,8 @@ fn test_parse_with_accidentals() {
 #[test]
 fn test_accidentals_affect_midi() {
     let parser = LilyPondParser::new();
-    let code = "{ c'4 cis'4 d'4 des'4 }";
+    let code = r#"\tempo 4 = 120
+    { c'4 cis'4 d'4 des'4 }"#;
     let result = parser.parse(code).unwrap();
 
     let notes = result.notes();
@@ -61,10 +75,8 @@ fn test_parse_tempo() {
     { c'4 d'4 e'4 }"#;
     let result = parser.parse(code).unwrap();
 
-    assert!(result.tempo.is_some());
-    let tempo = result.tempo.unwrap();
-    assert_eq!(tempo.beat_unit, 4);
-    assert_eq!(tempo.bpm, 120);
+    assert_eq!(result.tempo.beat_unit, 4);
+    assert_eq!(result.tempo.bpm, 120);
 }
 
 #[test]
@@ -82,8 +94,8 @@ fn test_generate_with_tempo() {
     let tempo = Tempo { beat_unit: 4, bpm: 120 };
 
     let strudel = StrudelGenerator::generate(&notes, Some(&tempo));
-    // 1 note with weight 1 at 120 BPM = 120 cpm
-    assert!(strudel.contains(".cpm(120)"));
+    // 1 note = 1 bar, so cpm is tempo/4/1
+    assert!(strudel.contains(".cpm(tempo/4/1)"));
 }
 
 #[test]
@@ -106,7 +118,8 @@ fn test_generate_without_tempo() {
 #[test]
 fn test_repeat_structure() {
     let parser = LilyPondParser::new();
-    let code = r#"{ \repeat unfold 3 { c'4 d'4 } }"#;
+    let code = r#"\tempo 4 = 120
+    { \repeat unfold 3 { c'4 d'4 } }"#;
     let result = parser.parse(code).unwrap();
 
     // notes() returns unique notes only (not expanded)
@@ -115,31 +128,34 @@ fn test_repeat_structure() {
     assert_eq!(notes[0].name, 'c');
     assert_eq!(notes[1].name, 'd');
 
-    // Check that the generated output uses *3 syntax
+    // Check that the generated output uses !3 syntax for repeats
+    // Notes without bar line are in the same bar: [c4 d4]
     let events = result.staves[0].events().unwrap();
     let strudel = StrudelGenerator::generate_pitched_staff(events, None);
-    assert!(strudel.contains("[c4 d4]*3"));
+    assert!(strudel.contains("[[c4 d4]]!3"));
 }
 
 #[test]
 fn test_nested_repeat() {
     let parser = LilyPondParser::new();
-    let code = r#"{ \repeat unfold 2 { \repeat unfold 2 { c'4 } } }"#;
+    let code = r#"\tempo 4 = 120
+    { \repeat unfold 2 { \repeat unfold 2 { c'4 } } }"#;
     let result = parser.parse(code).unwrap();
 
     // Only 1 unique note
     assert_eq!(result.notes().len(), 1);
 
-    // Check nested repeat syntax
+    // Check nested repeat syntax with ! notation
     let events = result.staves[0].events().unwrap();
     let strudel = StrudelGenerator::generate_pitched_staff(events, None);
-    assert!(strudel.contains("[c4]*2]*2") || strudel.contains("[[c4]*2]*2"));
+    assert!(strudel.contains("[[[c4]]!2]!2"));
 }
 
 #[test]
 fn test_multi_staff_score() {
     let parser = LilyPondParser::new();
     let code = r#"
+\tempo 4 = 120
 voicea = { c'4 d'4 }
 voiceb = { e'4 f'4 }
 
@@ -191,14 +207,15 @@ fn test_generate_multi_staff() {
     ];
 
     let strudel = StrudelGenerator::generate_multi(&staves, None);
-    assert!(strudel.contains("$: note(\"c4\")"));
-    assert!(strudel.contains("$: note(\"e4\")"));
+    assert!(strudel.contains("$: note(\"[c4]\")"));
+    assert!(strudel.contains("$: note(\"[e4]\")"));
 }
 
 #[test]
 fn test_parse_drum_staff() {
     let parser = LilyPondParser::new();
     let code = r#"
+\tempo 4 = 120
 mydrums = \drummode { bd4 hh4 sn4 hh4 }
 
 \score {
@@ -236,13 +253,14 @@ fn test_generate_drum_staff() {
     }];
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
-    assert!(strudel.contains("sound(\"bd hh\")"));
+    assert!(strudel.contains("sound(\"[bd hh]\")"));
 }
 
 #[test]
 fn test_parse_multi_voice_drum_staff() {
     let parser = LilyPondParser::new();
     let code = r#"
+\tempo 4 = 120
 kicks = \drummode { bd4 bd4 }
 hats = \drummode { hh8 hh8 hh8 hh8 }
 
@@ -293,14 +311,15 @@ fn test_generate_multi_voice_drum_staff() {
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
     assert!(strudel.contains("stack("));
-    assert!(strudel.contains("sound(\"bd\")"));
-    assert!(strudel.contains("sound(\"hh@0.5\")"));
+    assert!(strudel.contains("sound(\"[bd]\")"));
+    assert!(strudel.contains("sound(\"[hh@0.5]\")"));
 }
 
 #[test]
 fn test_mixed_pitched_and_drum_staves() {
     let parser = LilyPondParser::new();
     let code = r#"
+\tempo 4 = 120
 voice = { c'4 d'4 }
 drums = \drummode { bd4 sn4 }
 
@@ -338,14 +357,15 @@ fn test_generate_mixed_staves() {
     ];
 
     let strudel = StrudelGenerator::generate_multi(&staves, None);
-    assert!(strudel.contains("$: note(\"c4\")"));
-    assert!(strudel.contains("$: sound(\"bd\")"));
+    assert!(strudel.contains("$: note(\"[c4]\")"));
+    assert!(strudel.contains("$: sound(\"[bd]\")"));
 }
 
 #[test]
 fn test_parse_chord() {
     let parser = LilyPondParser::new();
-    let code = "{ <a c e>4 g'4 }";
+    let code = r#"\tempo 4 = 120
+    { <a c e>4 g'4 }"#;
     let result = parser.parse(code).unwrap();
 
     let notes = result.notes();
@@ -400,9 +420,10 @@ fn test_generate_chord() {
 
 #[test]
 fn test_bar_line_parsed() {
-    // Test that bar lines are parsed (but ignored in output)
+    // Test that bar lines are parsed and used for grouping
     let parser = LilyPondParser::new();
-    let code = "{ c'4 d'4 | e'4 f'4 }";
+    let code = r#"\tempo 4 = 120
+    { c'4 d'4 | e'4 f'4 }"#;
     let result = parser.parse(code).unwrap();
 
     let events = result.staves[0].events().unwrap();
@@ -411,14 +432,15 @@ fn test_bar_line_parsed() {
     assert!(matches!(events[2], PitchedEvent::BarLine));
 
     let strudel = StrudelGenerator::generate_pitched_staff(events, None);
-    // Bar lines are skipped in output
-    assert!(strudel.contains("c4 d4 e4 f4"));
+    // Bar lines create separate bars in brackets
+    assert!(strudel.contains("[c4 d4] [e4 f4]"));
 }
 
 #[test]
 fn test_pan_modifier() {
     let parser = LilyPondParser::new();
     let code = r#"
+\tempo 4 = 120
 voice = { c'4 d'4 }
 
 \score {
@@ -443,6 +465,7 @@ voice = { c'4 d'4 }
 fn test_pan_pattern() {
     let parser = LilyPondParser::new();
     let code = r#"
+\tempo 4 = 120
 voice = { c'4 d'4 }
 
 \score {
@@ -462,5 +485,31 @@ voice = { c'4 d'4 }
     let strudel = StrudelGenerator::generate_staff(&result.staves[0], None);
     // Patterns should be wrapped in quotes
     assert!(strudel.contains(".pan(\"<0 .5 1>\")"));
+}
+
+#[test]
+fn test_gain_pattern() {
+    let parser = LilyPondParser::new();
+    let code = r#"
+\tempo 4 = 120
+voice = { c'4 d'4 }
+
+\score {
+  <<
+    \new Staff {
+      % @strudel-of-lilypond@ gain <0.5 1 1.5>
+      \voice
+    }
+  >>
+}
+"#;
+    let result = parser.parse(code).unwrap();
+
+    assert_eq!(result.staves.len(), 1);
+    assert_eq!(result.staves[0].gain, Some("<0.5 1 1.5>".to_string()));
+
+    let strudel = StrudelGenerator::generate_staff(&result.staves[0], None);
+    // Patterns should be wrapped in quotes
+    assert!(strudel.contains(".gain(\"<0.5 1 1.5>\")"));
 }
 
