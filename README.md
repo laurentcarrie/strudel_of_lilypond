@@ -42,7 +42,9 @@ Parses LilyPond notation with support for:
 - Score blocks with simultaneous staves (`\score { << ... >> }`)
 - Staff types: `\new Staff`, `\new TabStaff`, `\new DrumStaff`
 - Drum voices: `\new DrumVoice` inside DrumStaff
-- Repeat expansion (`\repeat unfold/percent N { ... }`) → Strudel `*N` syntax
+- Repeat expansion (`\repeat unfold/percent N { ... }`) → Strudel `!N` syntax
+- Bar grouping: each bar is wrapped in `[...]` brackets
+- Multi-bar repeats include duration: `[[[bar1] [bar2]]!2]@4`
 - Notes with accidentals (`is`/`es`), octave markers (`'`/`,`), and durations
 - Chords (`<c e g>4`) → Strudel `[c4,e4,g4]` syntax
 - Punchcard visualization comments (see below)
@@ -62,7 +64,8 @@ Generates Strudel patterns:
 - Octave: `'` raises octave, `,` lowers octave (middle C = `c'`)
 - Duration: number after note (4 = quarter, 8 = eighth, 2 = half, 1 = whole)
 - Rests: `r` → `~`, `r2` → `~ ~` (half rest = two quarter rests)
-- Bar lines (`|`) are skipped
+- Bar lines (`|`) define bar groupings in output
+- Durations: whole=`@4`, half=`@2`, quarter=(none), eighth=`@0.5`, sixteenth=`@0.25`
 
 ## Strudel Modifiers
 
@@ -97,17 +100,30 @@ Add special comments inside a staff or voice to control Strudel output:
 This generates Strudel code with the specified modifiers:
 
 ```javascript
-$: note("c4 d4 e4")
+const tempo = 60;
+
+$: note("[c4 d4 e4]")
 .gain(2)
 .pan(0.25)
 .color("red")
 ._punchcard()
   .s("piano")
+  .cpm(tempo/4/1)
 
 $: stack(
-  sound("bd bd")
+  sound("[[bd bd]]!2")
+  .pan("<0 .5 1>")
   .color("cyan")
   ._punchcard(),
-  sound("hh hh hh hh"),
+  sound("[[hh@0.5 hh@0.5 hh@0.5 hh@0.5]]!2"),
 )
+  .cpm(tempo/4/2)
 ```
+
+### Output Format
+
+- Each bar is wrapped in `[...]` brackets
+- Repeats use `!N` syntax: `[[bar content]]!3`
+- Multi-bar repeats include total duration: `[[[bar1] [bar2]]!2]@4`
+- CPM is calculated as `tempo/4/number_of_bars`
+- The `tempo` constant is defined at the top of the generated code
