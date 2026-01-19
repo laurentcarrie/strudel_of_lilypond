@@ -51,10 +51,8 @@ fn main() {
                 "Parsed {} staves ({} notes, {} drum hits)",
                 result.staves.len(), pitched_count, drum_count
             );
-            if let Some(ref tempo) = result.tempo {
-                eprintln!("Tempo: {} = {} BPM", tempo.beat_unit, tempo.bpm);
-            }
-            let html = StrudelGenerator::generate_html(&result.staves, result.tempo.as_ref(), stem);
+            eprintln!("Tempo: {} = {} BPM", result.tempo.beat_unit, result.tempo.bpm);
+            let html = StrudelGenerator::generate_html(&result.staves, Some(&result.tempo), stem);
 
             match fs::write(&output_path, &html) {
                 Ok(_) => println!("{output_path}"),

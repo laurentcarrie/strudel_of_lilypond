@@ -30,6 +30,7 @@ pub enum PitchedEvent {
 #[derive(Debug, Clone)]
 pub enum DrumEvent {
     Hit(DrumHit),
+    Rest { duration: u32 },
     BarLine,
     RepeatStart(u32),
     RepeatEnd,
@@ -125,7 +126,7 @@ impl Staff {
 #[derive(Debug)]
 pub struct ParseResult {
     pub staves: Vec<Staff>,
-    pub tempo: Option<Tempo>,
+    pub tempo: Tempo,
 }
 
 impl ParseResult {
@@ -169,7 +170,8 @@ impl LilyPondParser {
     }
 
     pub fn parse(&self, code: &str) -> Result<ParseResult, String> {
-        let tempo = self.parse_tempo(code);
+        let tempo = self.parse_tempo(code)
+            .ok_or("Missing tempo: LilyPond input must include a \\tempo directive (e.g., \\tempo 4 = 120)")?;
         let variables = self.parse_variables(code);
         let marked = self.mark_repeats(code);
         let variables_marked: HashMap<String, VariableKind> = variables
@@ -463,12 +465,49 @@ impl LilyPondParser {
                 events.push(DrumEvent::RepeatStart(count));
             } else if token == "__REPEAT_END__" {
                 events.push(DrumEvent::RepeatEnd);
+            } else if let Some(rest) = self.parse_drum_rest(&token) {
+                events.push(rest);
             } else if let Some(hit) = self.parse_drum_hit(&token) {
                 events.push(DrumEvent::Hit(hit));
             }
         }
 
         Ok(events)
+    }
+
+    fn parse_drum_rest(&self, token: &str) -> Option<DrumEvent> {
+        let token = token.trim();
+
+        // Must start with 'r' and not be a command like \repeat
+        if !token.starts_with('r') || token.starts_with("repeat") {
+            return None;
+        }
+
+        // Parse duration after 'r'
+        let mut chars = token[1..].chars().peekable();
+        let mut duration_str = String::new();
+
+        while let Some(&c) = chars.peek() {
+            if c.is_numeric() {
+                duration_str.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        // Verify no alphabetic characters follow (would indicate this isn't a rest)
+        if chars.any(|c| c.is_alphabetic()) {
+            return None;
+        }
+
+        let duration = if duration_str.is_empty() {
+            4 // Default to quarter note
+        } else {
+            duration_str.parse::<u32>().unwrap_or(4)
+        };
+
+        Some(DrumEvent::Rest { duration })
     }
 
     fn parse_drum_voices(
@@ -952,7 +991,7 @@ impl StrudelGenerator {
 
         while *idx < events.len() {
             match &events[*idx] {
-                DrumEvent::Hit(_) => {
+                DrumEvent::Hit(_) | DrumEvent::Rest { .. } => {
                     has_content = true;
                     *idx += 1;
                 }
@@ -1194,6 +1233,10 @@ impl StrudelGenerator {
             match &events[*idx] {
                 DrumEvent::Hit(h) => {
                     current_bar.push(Self::format_drum_hit(h));
+                    *idx += 1;
+                }
+                DrumEvent::Rest { duration } => {
+                    current_bar.push(Self::format_rest(*duration));
                     *idx += 1;
                 }
                 DrumEvent::BarLine => {
