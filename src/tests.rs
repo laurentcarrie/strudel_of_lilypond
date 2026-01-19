@@ -82,8 +82,8 @@ fn test_generate_with_tempo() {
     let tempo = Tempo { beat_unit: 4, bpm: 120 };
 
     let strudel = StrudelGenerator::generate(&notes, Some(&tempo));
-    // 1 note with weight 1 at 120 BPM = 120 cpm
-    assert!(strudel.contains(".cpm(120)"));
+    // 1 note = 1 bar, so cpm is tempo/4/1
+    assert!(strudel.contains(".cpm(tempo/4/1)"));
 }
 
 #[test]
@@ -115,10 +115,11 @@ fn test_repeat_structure() {
     assert_eq!(notes[0].name, 'c');
     assert_eq!(notes[1].name, 'd');
 
-    // Check that the generated output uses *3 syntax
+    // Check that the generated output uses !3 syntax for repeats
+    // Notes without bar line are in the same bar: [c4 d4]
     let events = result.staves[0].events().unwrap();
     let strudel = StrudelGenerator::generate_pitched_staff(events, None);
-    assert!(strudel.contains("[c4 d4]*3"));
+    assert!(strudel.contains("[[c4 d4]]!3"));
 }
 
 #[test]
@@ -130,10 +131,10 @@ fn test_nested_repeat() {
     // Only 1 unique note
     assert_eq!(result.notes().len(), 1);
 
-    // Check nested repeat syntax
+    // Check nested repeat syntax with ! notation
     let events = result.staves[0].events().unwrap();
     let strudel = StrudelGenerator::generate_pitched_staff(events, None);
-    assert!(strudel.contains("[c4]*2]*2") || strudel.contains("[[c4]*2]*2"));
+    assert!(strudel.contains("[[[c4]]!2]!2"));
 }
 
 #[test]
@@ -191,8 +192,8 @@ fn test_generate_multi_staff() {
     ];
 
     let strudel = StrudelGenerator::generate_multi(&staves, None);
-    assert!(strudel.contains("$: note(\"c4\")"));
-    assert!(strudel.contains("$: note(\"e4\")"));
+    assert!(strudel.contains("$: note(\"[c4]\")"));
+    assert!(strudel.contains("$: note(\"[e4]\")"));
 }
 
 #[test]
@@ -236,7 +237,7 @@ fn test_generate_drum_staff() {
     }];
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
-    assert!(strudel.contains("sound(\"bd hh\")"));
+    assert!(strudel.contains("sound(\"[bd hh]\")"));
 }
 
 #[test]
@@ -293,8 +294,8 @@ fn test_generate_multi_voice_drum_staff() {
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
     assert!(strudel.contains("stack("));
-    assert!(strudel.contains("sound(\"bd\")"));
-    assert!(strudel.contains("sound(\"hh@0.5\")"));
+    assert!(strudel.contains("sound(\"[bd]\")"));
+    assert!(strudel.contains("sound(\"[hh@croche]\")"));
 }
 
 #[test]
@@ -338,8 +339,8 @@ fn test_generate_mixed_staves() {
     ];
 
     let strudel = StrudelGenerator::generate_multi(&staves, None);
-    assert!(strudel.contains("$: note(\"c4\")"));
-    assert!(strudel.contains("$: sound(\"bd\")"));
+    assert!(strudel.contains("$: note(\"[c4]\")"));
+    assert!(strudel.contains("$: sound(\"[bd]\")"));
 }
 
 #[test]
@@ -400,7 +401,7 @@ fn test_generate_chord() {
 
 #[test]
 fn test_bar_line_parsed() {
-    // Test that bar lines are parsed (but ignored in output)
+    // Test that bar lines are parsed and used for grouping
     let parser = LilyPondParser::new();
     let code = "{ c'4 d'4 | e'4 f'4 }";
     let result = parser.parse(code).unwrap();
@@ -411,8 +412,8 @@ fn test_bar_line_parsed() {
     assert!(matches!(events[2], PitchedEvent::BarLine));
 
     let strudel = StrudelGenerator::generate_pitched_staff(events, None);
-    // Bar lines are skipped in output
-    assert!(strudel.contains("c4 d4 e4 f4"));
+    // Bar lines create separate bars in brackets
+    assert!(strudel.contains("[c4 d4] [e4 f4]"));
 }
 
 #[test]

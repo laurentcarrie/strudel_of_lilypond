@@ -903,8 +903,93 @@ impl Default for LilyPondParser {
 pub struct StrudelGenerator;
 
 impl StrudelGenerator {
-    fn calculate_cpm(total_beats: f64, tempo: Option<&Tempo>) -> Option<f64> {
-        tempo.map(|t| t.bpm as f64 / total_beats)
+    /// Count bars in pitched events (including repeats)
+    fn count_pitched_bars(events: &[PitchedEvent], idx: &mut usize) -> u32 {
+        let mut bars = 0;
+        let mut has_content = false;
+
+        while *idx < events.len() {
+            match &events[*idx] {
+                PitchedEvent::Note(_) | PitchedEvent::Rest { .. } => {
+                    has_content = true;
+                    *idx += 1;
+                }
+                PitchedEvent::BarLine => {
+                    if has_content {
+                        bars += 1;
+                        has_content = false;
+                    }
+                    *idx += 1;
+                }
+                PitchedEvent::RepeatStart(count) => {
+                    if has_content {
+                        bars += 1;
+                        has_content = false;
+                    }
+                    *idx += 1;
+                    let inner_bars = Self::count_pitched_bars(events, idx);
+                    bars += inner_bars * count;
+                }
+                PitchedEvent::RepeatEnd => {
+                    *idx += 1;
+                    break;
+                }
+            }
+        }
+
+        // Count final bar if there's content
+        if has_content {
+            bars += 1;
+        }
+
+        bars
+    }
+
+    /// Count bars in drum events (including repeats)
+    fn count_drum_bars(events: &[DrumEvent], idx: &mut usize) -> u32 {
+        let mut bars = 0;
+        let mut has_content = false;
+
+        while *idx < events.len() {
+            match &events[*idx] {
+                DrumEvent::Hit(_) => {
+                    has_content = true;
+                    *idx += 1;
+                }
+                DrumEvent::BarLine => {
+                    if has_content {
+                        bars += 1;
+                        has_content = false;
+                    }
+                    *idx += 1;
+                }
+                DrumEvent::RepeatStart(count) => {
+                    if has_content {
+                        bars += 1;
+                        has_content = false;
+                    }
+                    *idx += 1;
+                    let inner_bars = Self::count_drum_bars(events, idx);
+                    bars += inner_bars * count;
+                }
+                DrumEvent::RepeatEnd => {
+                    *idx += 1;
+                    break;
+                }
+            }
+        }
+
+        // Count final bar if there's content
+        if has_content {
+            bars += 1;
+        }
+
+        bars
+    }
+
+    /// Generate CPM expression as tempo/4/bars
+    fn format_cpm_expression(bars: u32) -> String {
+        format!("tempo/4/{}", bars)
     }
 
     fn format_note(n: &Note) -> String {
@@ -925,9 +1010,22 @@ impl StrudelGenerator {
         }
     }
 
-    fn format_pitched_note(n: &Note) -> String {
-        let weight = 4.0 / n.duration as f32;
+    /// Format weight using French note duration names
+    fn format_weight(duration: u32) -> Option<String> {
+        match duration {
+            1 => Some("ronde".to_string()),      // whole note = 4 quarter notes
+            2 => Some("blanche".to_string()),    // half note = 2 quarter notes
+            4 => None,                            // quarter note = 1 (no weight needed)
+            8 => Some("croche".to_string()),     // eighth note = 0.5 quarter notes
+            16 => Some("doublecroche".to_string()), // sixteenth note = 0.25 quarter notes
+            _ => {
+                let weight = 4.0 / duration as f32;
+                Some(weight.to_string())
+            }
+        }
+    }
 
+    fn format_pitched_note(n: &Note) -> String {
         // Check if this is a chord
         let note_str = if let Some(ref chord_notes) = n.chord_notes {
             // Format as [note1,note2,note3]
@@ -940,10 +1038,9 @@ impl StrudelGenerator {
             Self::format_note(n)
         };
 
-        if weight == 1.0 {
-            note_str
-        } else {
-            format!("{}@{}", note_str, weight)
+        match Self::format_weight(n.duration) {
+            Some(w) => format!("{}@{}", note_str, w),
+            None => note_str,
         }
     }
 
@@ -961,25 +1058,36 @@ impl StrudelGenerator {
     }
 
     fn generate_pitched_pattern(events: &[PitchedEvent], idx: &mut usize) -> String {
-        let mut parts: Vec<String> = Vec::new();
+        let mut bars: Vec<String> = Vec::new();
+        let mut current_bar: Vec<String> = Vec::new();
 
         while *idx < events.len() {
             match &events[*idx] {
                 PitchedEvent::Note(n) => {
-                    parts.push(Self::format_pitched_note(n));
+                    current_bar.push(Self::format_pitched_note(n));
                     *idx += 1;
                 }
                 PitchedEvent::Rest { duration } => {
-                    parts.push(Self::format_rest(*duration));
+                    current_bar.push(Self::format_rest(*duration));
                     *idx += 1;
                 }
                 PitchedEvent::BarLine => {
-                    *idx += 1; // Skip bar lines
+                    // Save current bar and start a new one
+                    if !current_bar.is_empty() {
+                        bars.push(format!("[{}]", current_bar.join(" ")));
+                        current_bar = Vec::new();
+                    }
+                    *idx += 1;
                 }
                 PitchedEvent::RepeatStart(count) => {
+                    // Save current bar content before repeat
+                    if !current_bar.is_empty() {
+                        bars.push(format!("[{}]", current_bar.join(" ")));
+                        current_bar = Vec::new();
+                    }
                     *idx += 1;
                     let inner = Self::generate_pitched_pattern(events, idx);
-                    parts.push(format!("[{}]*{}", inner, count));
+                    bars.push(format!("[{}]!{}", inner, count));
                 }
                 PitchedEvent::RepeatEnd => {
                     *idx += 1;
@@ -988,36 +1096,12 @@ impl StrudelGenerator {
             }
         }
 
-        parts.join(" ")
-    }
-
-    fn calculate_pitched_beats(events: &[PitchedEvent], idx: &mut usize) -> f64 {
-        let mut total = 0.0;
-        while *idx < events.len() {
-            match &events[*idx] {
-                PitchedEvent::Note(n) => {
-                    total += 4.0 / n.duration as f64;
-                    *idx += 1;
-                }
-                PitchedEvent::Rest { duration } => {
-                    total += 4.0 / *duration as f64;
-                    *idx += 1;
-                }
-                PitchedEvent::BarLine => {
-                    *idx += 1;
-                }
-                PitchedEvent::RepeatStart(count) => {
-                    *idx += 1;
-                    let inner_beats = Self::calculate_pitched_beats(events, idx);
-                    total += inner_beats * (*count as f64);
-                }
-                PitchedEvent::RepeatEnd => {
-                    *idx += 1;
-                    break;
-                }
-            }
+        // Don't forget the last bar
+        if !current_bar.is_empty() {
+            bars.push(format!("[{}]", current_bar.join(" ")));
         }
-        total
+
+        bars.join(" ")
     }
 
     pub fn generate_pitched_staff(events: &[PitchedEvent], tempo: Option<&Tempo>) -> String {
@@ -1064,65 +1148,53 @@ impl StrudelGenerator {
             pattern, modifiers
         );
 
-        let mut beat_idx = 0;
-        let total_beats = Self::calculate_pitched_beats(events, &mut beat_idx);
-        if let Some(cpm) = Self::calculate_cpm(total_beats, tempo) {
-            format!("{base}\n  .cpm({cpm})")
+        if tempo.is_some() {
+            let mut bar_idx = 0;
+            let bars = Self::count_pitched_bars(events, &mut bar_idx);
+            if bars > 0 {
+                format!("{base}\n  .cpm({})", Self::format_cpm_expression(bars))
+            } else {
+                base
+            }
         } else {
             base
         }
     }
 
     fn format_drum_hit(h: &DrumHit) -> String {
-        let weight = 4.0 / h.duration as f32;
-        if weight == 1.0 {
-            h.name.clone()
-        } else {
-            format!("{}@{}", h.name, weight)
+        match Self::format_weight(h.duration) {
+            Some(w) => format!("{}@{}", h.name, w),
+            None => h.name.clone(),
         }
-    }
-
-    fn calculate_drum_beats(events: &[DrumEvent], idx: &mut usize) -> f64 {
-        let mut total = 0.0;
-        while *idx < events.len() {
-            match &events[*idx] {
-                DrumEvent::Hit(h) => {
-                    total += 4.0 / h.duration as f64;
-                    *idx += 1;
-                }
-                DrumEvent::BarLine => {
-                    *idx += 1;
-                }
-                DrumEvent::RepeatStart(count) => {
-                    *idx += 1;
-                    let inner_beats = Self::calculate_drum_beats(events, idx);
-                    total += inner_beats * (*count as f64);
-                }
-                DrumEvent::RepeatEnd => {
-                    *idx += 1;
-                    break;
-                }
-            }
-        }
-        total
     }
 
     fn generate_drum_pattern(events: &[DrumEvent], idx: &mut usize) -> String {
-        let mut parts: Vec<String> = Vec::new();
+        let mut bars: Vec<String> = Vec::new();
+        let mut current_bar: Vec<String> = Vec::new();
 
         while *idx < events.len() {
             match &events[*idx] {
                 DrumEvent::Hit(h) => {
-                    parts.push(Self::format_drum_hit(h));
+                    current_bar.push(Self::format_drum_hit(h));
                     *idx += 1;
                 }
                 DrumEvent::BarLine => {
-                    *idx += 1; // Skip bar lines
+                    // Save current bar and start a new one
+                    if !current_bar.is_empty() {
+                        bars.push(format!("[{}]", current_bar.join(" ")));
+                        current_bar = Vec::new();
+                    }
+                    *idx += 1;
                 }
                 DrumEvent::RepeatStart(count) => {
+                    // Save current bar content before repeat
+                    if !current_bar.is_empty() {
+                        bars.push(format!("[{}]", current_bar.join(" ")));
+                        current_bar = Vec::new();
+                    }
                     *idx += 1;
                     let inner = Self::generate_drum_pattern(events, idx);
-                    parts.push(format!("[{}]*{}", inner, count));
+                    bars.push(format!("[{}]!{}", inner, count));
                 }
                 DrumEvent::RepeatEnd => {
                     *idx += 1;
@@ -1131,7 +1203,12 @@ impl StrudelGenerator {
             }
         }
 
-        parts.join(" ")
+        // Don't forget the last bar
+        if !current_bar.is_empty() {
+            bars.push(format!("[{}]", current_bar.join(" ")));
+        }
+
+        bars.join(" ")
     }
 
     #[allow(dead_code)]
@@ -1162,9 +1239,6 @@ impl StrudelGenerator {
         let pattern = Self::generate_drum_pattern(events, &mut idx);
         let base = format!("sound(\"{}\")", pattern);
 
-        let mut beat_idx = 0;
-        let total_beats = Self::calculate_drum_beats(events, &mut beat_idx);
-
         // Build modifiers with newlines
         let mut modifiers = String::new();
         if let Some(g) = gain {
@@ -1180,8 +1254,14 @@ impl StrudelGenerator {
 
         let with_modifiers = format!("{}{}", base, modifiers);
 
-        if let Some(cpm) = Self::calculate_cpm(total_beats, tempo) {
-            format!("{with_modifiers}\n  .cpm({cpm})")
+        if tempo.is_some() {
+            let mut bar_idx = 0;
+            let bars = Self::count_drum_bars(events, &mut bar_idx);
+            if bars > 0 {
+                format!("{with_modifiers}\n  .cpm({})", Self::format_cpm_expression(bars))
+            } else {
+                with_modifiers
+            }
         } else {
             with_modifiers
         }
@@ -1231,17 +1311,22 @@ impl StrudelGenerator {
 
         let stacked = format!("stack(\n  {},\n)", voice_patterns.join(",\n  "));
 
-        // Use the longest voice to calculate cpm
-        let max_beats: f64 = voices
-            .iter()
-            .map(|voice| {
-                let mut idx = 0;
-                Self::calculate_drum_beats(&voice.events, &mut idx)
-            })
-            .fold(0.0, f64::max);
+        if tempo.is_some() {
+            // Use the longest voice to calculate bars
+            let max_bars: u32 = voices
+                .iter()
+                .map(|voice| {
+                    let mut idx = 0;
+                    Self::count_drum_bars(&voice.events, &mut idx)
+                })
+                .max()
+                .unwrap_or(0);
 
-        if let Some(cpm) = Self::calculate_cpm(max_beats, tempo) {
-            format!("{stacked}\n  .cpm({cpm})")
+            if max_bars > 0 {
+                format!("{stacked}\n  .cpm({})", Self::format_cpm_expression(max_bars))
+            } else {
+                stacked
+            }
         } else {
             stacked
         }
@@ -1277,6 +1362,18 @@ impl StrudelGenerator {
 
     pub fn generate_html(staves: &[Staff], tempo: Option<&Tempo>, title: &str) -> String {
         let pattern = Self::generate_multi(staves, tempo);
+        let tempo_const = tempo
+            .map(|t| format!("const tempo = {};", t.bpm))
+            .unwrap_or_else(|| "const tempo = 120;".to_string());
+        let constants = format!(
+            r#"const ronde=4;
+const blanche=2;
+const noire=1;
+const croche=1/2;
+const doublecroche=1/4;
+{}"#,
+            tempo_const
+        );
         format!(
             r#"<!DOCTYPE html>
 <html>
@@ -1293,6 +1390,8 @@ impl StrudelGenerator {
 <body>
   <strudel-repl>
 <!--
+{constants}
+
 {pattern}
 -->
   </strudel-repl>
