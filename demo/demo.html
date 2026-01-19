@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>demo</title>
+  <script src="https://unpkg.com/@strudel/embed@latest"></script>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; }
+    strudel-repl { width: 100%; height: 100%; display: block; }
+    strudel-repl iframe { width: 100%; height: 100%; border: none; }
+  </style>
+</head>
+<body>
+  <strudel-repl>
+<!--
+const tempo = 60;
+
+$: note("[[[[a3,c3,e3] a3 a3 a3] [b3 ~ ~ b3]]!2]@4 [[c3,g3,c4]@4]")
+.gain(2)
+.pan(0.25)
+.color("red")
+._punchcard()
+  .s("piano")
+  .cpm(tempo/4/5)
+
+$: stack(
+  sound("[[bd sd bd sd]]!2 [[bd@0.5 bd@0.5 ~ bd sd]]!2 [bd bd bd bd]")
+  .gain("<1 2 3>")
+  .pan("<0 .5 1>")
+  .color("cyan")
+  ._punchcard(),
+  sound("[[hh@0.5 hh@0.5 hh@0.5 hh@0.5 hh@0.5 hh@0.5 hh@0.5 hh@0.5]]!5"),
+)
+  .cpm(tempo/4/5)
+-->
+  </strudel-repl>
+</body>
+</html>

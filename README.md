@@ -14,6 +14,13 @@ cargo install strudel-of-lilypond
 strudel-of-lilypond input.ly    # Creates input.html with embedded Strudel REPL
 ```
 
+## Demo
+
+See the [demo/](./demo/) directory for a complete example with:
+- LilyPond source file with tab staff, drum staff, and multiple voices
+- Generated Strudel REPL output
+- Punchcard visualization, gain, and pan modifiers
+
 ## Build from Source
 
 ```bash
@@ -37,6 +44,7 @@ The codebase is a Rust library (`src/lib.rs`) with a CLI frontend (`src/main.rs`
 ### LilyPondParser
 
 Parses LilyPond notation with support for:
+- **Tempo (required)**: `\tempo 4 = 120` - must be present in input
 - Variable definitions (`voice = { ... }`)
 - Drum mode (`drums = \drummode { ... }`)
 - Score blocks with simultaneous staves (`\score { << ... >> }`)
@@ -59,6 +67,7 @@ Generates Strudel patterns:
 
 ## LilyPond Notation Quick Reference
 
+- **Tempo (required)**: `\tempo 4 = 120` - specifies beat unit and BPM
 - Note names: `c d e f g a b`
 - Accidentals: `is` (sharp), `es` (flat) - e.g., `cis` = C#, `des` = Db
 - Octave: `'` raises octave, `,` lowers octave (middle C = `c'`)
@@ -76,6 +85,8 @@ Add special comments inside a staff or voice to control Strudel output:
 - `% @strudel-of-lilypond@ pan <value>` - Set stereo panning (supports patterns like `<0 .5 1>`)
 
 ```lilypond
+\tempo 4 = 60
+
 \new TabStaff {
   % @strudel-of-lilypond@ red punchcard
   % @strudel-of-lilypond@ gain 2
