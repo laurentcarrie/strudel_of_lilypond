@@ -1010,14 +1010,14 @@ impl StrudelGenerator {
         }
     }
 
-    /// Format weight using French note duration names
+    /// Format weight as explicit numeric value (4, 2, 1, 0.5, 0.25)
     fn format_weight(duration: u32) -> Option<String> {
         match duration {
-            1 => Some("ronde".to_string()),      // whole note = 4 quarter notes
-            2 => Some("blanche".to_string()),    // half note = 2 quarter notes
-            4 => None,                            // quarter note = 1 (no weight needed)
-            8 => Some("croche".to_string()),     // eighth note = 0.5 quarter notes
-            16 => Some("doublecroche".to_string()), // sixteenth note = 0.25 quarter notes
+            1 => Some("4".to_string()),       // whole note = 4 quarter notes
+            2 => Some("2".to_string()),       // half note = 2 quarter notes
+            4 => None,                         // quarter note = 1 (no weight needed)
+            8 => Some("0.5".to_string()),     // eighth note = 0.5 quarter notes
+            16 => Some("0.25".to_string()),   // sixteenth note = 0.25 quarter notes
             _ => {
                 let weight = 4.0 / duration as f32;
                 Some(weight.to_string())
@@ -1365,15 +1365,6 @@ impl StrudelGenerator {
         let tempo_const = tempo
             .map(|t| format!("const tempo = {};", t.bpm))
             .unwrap_or_else(|| "const tempo = 120;".to_string());
-        let constants = format!(
-            r#"const ronde=4;
-const blanche=2;
-const noire=1;
-const croche=1/2;
-const doublecroche=1/4;
-{}"#,
-            tempo_const
-        );
         format!(
             r#"<!DOCTYPE html>
 <html>
@@ -1390,7 +1381,7 @@ const doublecroche=1/4;
 <body>
   <strudel-repl>
 <!--
-{constants}
+{tempo_const}
 
 {pattern}
 -->

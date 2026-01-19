@@ -295,7 +295,7 @@ fn test_generate_multi_voice_drum_staff() {
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
     assert!(strudel.contains("stack("));
     assert!(strudel.contains("sound(\"[bd]\")"));
-    assert!(strudel.contains("sound(\"[hh@croche]\")"));
+    assert!(strudel.contains("sound(\"[hh@0.5]\")"));
 }
 
 #[test]
