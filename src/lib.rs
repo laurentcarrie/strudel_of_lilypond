@@ -1057,9 +1057,11 @@ impl StrudelGenerator {
         }
     }
 
-    fn generate_pitched_pattern(events: &[PitchedEvent], idx: &mut usize) -> String {
+    /// Returns (pattern_string, bar_count)
+    fn generate_pitched_pattern_with_bars(events: &[PitchedEvent], idx: &mut usize) -> (String, u32) {
         let mut bars: Vec<String> = Vec::new();
         let mut current_bar: Vec<String> = Vec::new();
+        let mut bar_count: u32 = 0;
 
         while *idx < events.len() {
             match &events[*idx] {
@@ -1076,6 +1078,7 @@ impl StrudelGenerator {
                     if !current_bar.is_empty() {
                         bars.push(format!("[{}]", current_bar.join(" ")));
                         current_bar = Vec::new();
+                        bar_count += 1;
                     }
                     *idx += 1;
                 }
@@ -1084,10 +1087,18 @@ impl StrudelGenerator {
                     if !current_bar.is_empty() {
                         bars.push(format!("[{}]", current_bar.join(" ")));
                         current_bar = Vec::new();
+                        bar_count += 1;
                     }
                     *idx += 1;
-                    let inner = Self::generate_pitched_pattern(events, idx);
-                    bars.push(format!("[{}]!{}", inner, count));
+                    let (inner, inner_bars) = Self::generate_pitched_pattern_with_bars(events, idx);
+                    let total_bars = inner_bars * count;
+                    // If more than one bar in repeat, add duration
+                    if inner_bars > 1 {
+                        bars.push(format!("[[{}]!{}]@{}", inner, count, total_bars));
+                    } else {
+                        bars.push(format!("[{}]!{}", inner, count));
+                    }
+                    bar_count += total_bars;
                 }
                 PitchedEvent::RepeatEnd => {
                     *idx += 1;
@@ -1099,9 +1110,14 @@ impl StrudelGenerator {
         // Don't forget the last bar
         if !current_bar.is_empty() {
             bars.push(format!("[{}]", current_bar.join(" ")));
+            bar_count += 1;
         }
 
-        bars.join(" ")
+        (bars.join(" "), bar_count)
+    }
+
+    fn generate_pitched_pattern(events: &[PitchedEvent], idx: &mut usize) -> String {
+        Self::generate_pitched_pattern_with_bars(events, idx).0
     }
 
     pub fn generate_pitched_staff(events: &[PitchedEvent], tempo: Option<&Tempo>) -> String {
@@ -1168,9 +1184,11 @@ impl StrudelGenerator {
         }
     }
 
-    fn generate_drum_pattern(events: &[DrumEvent], idx: &mut usize) -> String {
+    /// Returns (pattern_string, bar_count)
+    fn generate_drum_pattern_with_bars(events: &[DrumEvent], idx: &mut usize) -> (String, u32) {
         let mut bars: Vec<String> = Vec::new();
         let mut current_bar: Vec<String> = Vec::new();
+        let mut bar_count: u32 = 0;
 
         while *idx < events.len() {
             match &events[*idx] {
@@ -1183,6 +1201,7 @@ impl StrudelGenerator {
                     if !current_bar.is_empty() {
                         bars.push(format!("[{}]", current_bar.join(" ")));
                         current_bar = Vec::new();
+                        bar_count += 1;
                     }
                     *idx += 1;
                 }
@@ -1191,10 +1210,18 @@ impl StrudelGenerator {
                     if !current_bar.is_empty() {
                         bars.push(format!("[{}]", current_bar.join(" ")));
                         current_bar = Vec::new();
+                        bar_count += 1;
                     }
                     *idx += 1;
-                    let inner = Self::generate_drum_pattern(events, idx);
-                    bars.push(format!("[{}]!{}", inner, count));
+                    let (inner, inner_bars) = Self::generate_drum_pattern_with_bars(events, idx);
+                    let total_bars = inner_bars * count;
+                    // If more than one bar in repeat, add duration
+                    if inner_bars > 1 {
+                        bars.push(format!("[[{}]!{}]@{}", inner, count, total_bars));
+                    } else {
+                        bars.push(format!("[{}]!{}", inner, count));
+                    }
+                    bar_count += total_bars;
                 }
                 DrumEvent::RepeatEnd => {
                     *idx += 1;
@@ -1206,9 +1233,14 @@ impl StrudelGenerator {
         // Don't forget the last bar
         if !current_bar.is_empty() {
             bars.push(format!("[{}]", current_bar.join(" ")));
+            bar_count += 1;
         }
 
-        bars.join(" ")
+        (bars.join(" "), bar_count)
+    }
+
+    fn generate_drum_pattern(events: &[DrumEvent], idx: &mut usize) -> String {
+        Self::generate_drum_pattern_with_bars(events, idx).0
     }
 
     #[allow(dead_code)]
