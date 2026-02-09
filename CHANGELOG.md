@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1] - 2026-02-09
+
+### Changed
+- Bump version to 0.3.1
+- Add explicit type annotation in main for clarity
+
 ## [0.3.0] - 2026-01-19
 
 ### Added
