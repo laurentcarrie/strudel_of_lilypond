@@ -1,0 +1,15 @@
+tempo: 120
+sequence:
+  - description: intro tick
+    item: !Single
+      pattern_name: "library/count"
+  - description: "repeat kick and snare"
+    item: !RepeatBar
+      - 4
+      - pattern_name: "library/pattern1"
+  - description: "two kick only bars"
+    item: !Group
+      - !Single
+        pattern_name: "library/pattern2"
+      - !Single
+        pattern_name: "library/pattern2"

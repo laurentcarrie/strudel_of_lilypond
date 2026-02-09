@@ -51,15 +51,6 @@ myhh = \drummode {
     \tempo 4 = 60
     \set Score.currentBarNumber = 89
 
-    \new TabStaff {
-      % @strudel-of-lilypond@ red punchcard
-      % @strudel-of-lilypond@ gain 2
-      % @strudel-of-lilypond@ pan 0.25
-      \tabFullNotation
-      \override Score.BarNumber.break-visibility = ##(#t #t #t)
-      \voicea
-    }
-
     \new DrumStaff {
       <<
         \new DrumVoice {
