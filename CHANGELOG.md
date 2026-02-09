@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0] - 2026-02-09
+
+### Added
+- Bar sequencer binary (`strudel-of-lilypond-sequence`) for YAML-based sequence definitions
+- Pattern library with variable number of voices per pattern
+- `\include` directive expansion with cycle detection
+- Tempo variable support (`\tempo 4 = \varname`)
+- Side stick drum mapping (`ss` → `rim` in Strudel)
+- Comment markers (`% @strudel-of-lilypond@ comment`) in LilyPond output
+- Drum name mapping table in README
+
+### Changed
+- Pattern struct uses `voices: Vec<String>` instead of fixed `voice1`/`voice2`
+- Strudel patterns use backtick template literals with newlines between bars
+- LilyPond sequence output uses `\repeat volta` instead of copying patterns
+
 ## [0.3.1] - 2026-02-09
 
 ### Changed

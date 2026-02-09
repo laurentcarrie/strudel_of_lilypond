@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use strudel_of_lilypond::{LilyPondParser, StrudelGenerator, PitchedEvent, DrumEvent};
+use strudel_of_lilypond::{expand_includes, LilyPondParser, StrudelGenerator, PitchedEvent, DrumEvent};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -24,10 +24,22 @@ fn main() {
         format!("{stem}.html")
     };
 
-    let input = match fs::read_to_string(input_path) {
+    let raw_input = match fs::read_to_string(input_path) {
         Ok(content) => content,
         Err(e) => {
             eprintln!("Error reading {input_path}: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let base_dir = Path::new(input_path)
+        .parent()
+        .unwrap_or(Path::new("."));
+
+    let input = match expand_includes(&raw_input, base_dir) {
+        Ok(expanded) => expanded,
+        Err(e) => {
+            eprintln!("Error expanding includes: {e}");
             std::process::exit(1);
         }
     };

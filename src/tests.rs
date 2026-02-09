@@ -27,7 +27,8 @@ fn test_missing_tempo_error() {
 #[test]
 fn test_parse_with_accidentals() {
     let parser = LilyPondParser::new();
-    let code = r#"\tempo 4 = 120
+    let code = r#"mytempo=120
+    \tempo 4 = \mytempo
     { cis'4 des'4 }"#;
     let result = parser.parse(code).unwrap();
 
@@ -207,8 +208,8 @@ fn test_generate_multi_staff() {
     ];
 
     let strudel = StrudelGenerator::generate_multi(&staves, None);
-    assert!(strudel.contains("$: note(\"[c4]\")"));
-    assert!(strudel.contains("$: note(\"[e4]\")"));
+    assert!(strudel.contains("$: note(`\n[c4]`)"));
+    assert!(strudel.contains("$: note(`\n[e4]`)"));
 }
 
 #[test]
@@ -253,7 +254,7 @@ fn test_generate_drum_staff() {
     }];
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
-    assert!(strudel.contains("sound(\"[bd hh]\")"));
+    assert!(strudel.contains("sound(`\n[bd hh]`)"));
 }
 
 #[test]
@@ -311,8 +312,8 @@ fn test_generate_multi_voice_drum_staff() {
 
     let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
     assert!(strudel.contains("stack("));
-    assert!(strudel.contains("sound(\"[bd]\")"));
-    assert!(strudel.contains("sound(\"[hh@0.5]\")"));
+    assert!(strudel.contains("sound(`\n[bd]`)"));
+    assert!(strudel.contains("sound(`\n[hh@0.5]`)"));
 }
 
 #[test]
@@ -357,8 +358,8 @@ fn test_generate_mixed_staves() {
     ];
 
     let strudel = StrudelGenerator::generate_multi(&staves, None);
-    assert!(strudel.contains("$: note(\"[c4]\")"));
-    assert!(strudel.contains("$: sound(\"[bd]\")"));
+    assert!(strudel.contains("$: note(`\n[c4]`)"));
+    assert!(strudel.contains("$: sound(`\n[bd]`)"));
 }
 
 #[test]
@@ -433,7 +434,7 @@ fn test_bar_line_parsed() {
 
     let strudel = StrudelGenerator::generate_pitched_staff(events, None);
     // Bar lines create separate bars in brackets
-    assert!(strudel.contains("[c4 d4] [e4 f4]"));
+    assert!(strudel.contains("[c4 d4]\n[e4 f4]"));
 }
 
 #[test]
@@ -511,5 +512,86 @@ voice = { c'4 d'4 }
     let strudel = StrudelGenerator::generate_staff(&result.staves[0], None);
     // Patterns should be wrapped in quotes
     assert!(strudel.contains(".gain(\"<0.5 1 1.5>\")"));
+}
+
+// --- expand_includes tests ---
+
+#[test]
+fn test_include_basic() {
+    let dir = tempfile::tempdir().unwrap();
+    let notes_path = dir.path().join("notes.ly");
+    std::fs::write(&notes_path, "c'4 d'4 e'4").unwrap();
+
+    let code = r#"\include "notes.ly""#;
+    let result = expand_includes(code, dir.path()).unwrap();
+    assert_eq!(result, "c'4 d'4 e'4");
+}
+
+#[test]
+fn test_include_recursive() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("c.ly"), "e'4 f'4").unwrap();
+    std::fs::write(dir.path().join("b.ly"), r#"d'4 \include "c.ly""#).unwrap();
+
+    let code = r#"c'4 \include "b.ly""#;
+    let result = expand_includes(code, dir.path()).unwrap();
+    assert_eq!(result, "c'4 d'4 e'4 f'4");
+}
+
+#[test]
+fn test_include_cycle_detection() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.ly"), r#"\include "b.ly""#).unwrap();
+    std::fs::write(dir.path().join("b.ly"), r#"\include "a.ly""#).unwrap();
+
+    let code = r#"\include "a.ly""#;
+    let result = expand_includes(code, dir.path());
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("Circular include"));
+}
+
+#[test]
+fn test_include_file_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let code = r#"\include "nonexistent.ly""#;
+    let result = expand_includes(code, dir.path());
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("nonexistent.ly"));
+}
+
+#[test]
+fn test_include_surrounding_content_preserved() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("middle.ly"), "MIDDLE").unwrap();
+
+    let code = "BEFORE\n\\include \"middle.ly\"\nAFTER";
+    let result = expand_includes(code, dir.path()).unwrap();
+    assert!(result.starts_with("BEFORE\n"));
+    assert!(result.contains("MIDDLE"));
+    assert!(result.ends_with("\nAFTER"));
+}
+
+#[test]
+fn test_include_multiple_in_one_file() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.ly"), "AAA").unwrap();
+    std::fs::write(dir.path().join("b.ly"), "BBB").unwrap();
+
+    let code = "\\include \"a.ly\"\n\\include \"b.ly\"";
+    let result = expand_includes(code, dir.path()).unwrap();
+    assert!(result.contains("AAA"));
+    assert!(result.contains("BBB"));
+}
+
+#[test]
+fn test_include_mytempo() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("mytempo.ly"), "\\tempo 4 = \\songtempo ").unwrap();
+
+    let code = "\\include \"mytempo.ly\"\n\\tempo 4 = 120\n{ c'4 }";
+    let result = expand_includes(code, dir.path()).unwrap();
+    assert!(result.contains("\\tempo 4 = \\songtempo"));
+    assert!(result.contains("\\tempo 4 = 120"));
 }
 

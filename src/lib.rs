@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+pub mod sequencer;
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct Note {
@@ -25,6 +28,7 @@ pub enum PitchedEvent {
     BarLine,
     RepeatStart(u32),
     RepeatEnd,
+    Comment(String),
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +38,7 @@ pub enum DrumEvent {
     BarLine,
     RepeatStart(u32),
     RepeatEnd,
+    Comment(String),
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +154,54 @@ impl ParseResult {
 enum VariableKind {
     Pitched(String),
     Drums(String),
+}
+
+/// Expand `\include "file.ly"` directives by recursively inlining file contents.
+pub fn expand_includes(code: &str, base_dir: &Path) -> Result<String, String> {
+    let mut seen = HashSet::new();
+    expand_includes_recursive(code, base_dir, &mut seen)
+}
+
+fn expand_includes_recursive(
+    code: &str,
+    base_dir: &Path,
+    seen: &mut HashSet<PathBuf>,
+) -> Result<String, String> {
+    let re = regex::Regex::new(r#"\\include\s+"([^"]+)""#).unwrap();
+    let mut result = code.to_string();
+
+    loop {
+        let Some(caps) = re.captures(&result) else {
+            break;
+        };
+
+        let full_match = caps.get(0).unwrap();
+        let file_name = caps.get(1).unwrap().as_str();
+        let file_path = base_dir.join(file_name);
+
+        let canonical = file_path
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve include \"{}\": {}", file_name, e))?;
+
+        if !seen.insert(canonical.clone()) {
+            return Err(format!("Circular include detected: \"{}\"", file_name));
+        }
+
+        let content = std::fs::read_to_string(&canonical)
+            .map_err(|e| format!("Cannot read include \"{}\": {}", file_name, e))?;
+
+        let child_base = canonical.parent().unwrap_or(base_dir);
+        let expanded = expand_includes_recursive(&content, child_base, seen)?;
+
+        result = format!(
+            "{}{}{}",
+            &result[..full_match.start()],
+            expanded,
+            &result[full_match.end()..]
+        );
+    }
+
+    Ok(result)
 }
 
 pub struct LilyPondParser {
@@ -429,13 +482,25 @@ impl LilyPondParser {
         result
     }
 
+    fn mark_comments(&self, section: &str) -> String {
+        let re = regex::Regex::new(r"(?m)%\s*@strudel-of-lilypond@\s+comment\s+(.+)$").unwrap();
+        re.replace_all(section, |caps: &regex::Captures| {
+            let text = caps.get(1).unwrap().as_str().replace(' ', "\x01");
+            format!("__COMMENT_{}__", text)
+        }).to_string()
+    }
+
     fn parse_notes_from_section(&self, section: &str) -> Result<Vec<PitchedEvent>, String> {
         let mut events = Vec::new();
-        let tokens = self.tokenize(section);
+        let section = self.mark_comments(section);
+        let tokens = self.tokenize(&section);
         let repeat_start_re = regex::Regex::new(r"^__REPEAT_START_(\d+)__$").unwrap();
+        let comment_re = regex::Regex::new(r"^__COMMENT_(.+)__$").unwrap();
 
         for token in tokens {
-            if token.starts_with('|') {
+            if let Some(caps) = comment_re.captures(&token) {
+                events.push(PitchedEvent::Comment(caps.get(1).unwrap().as_str().replace('\x01', " ")));
+            } else if token.starts_with('|') {
                 events.push(PitchedEvent::BarLine);
             } else if let Some(caps) = repeat_start_re.captures(&token) {
                 let count: u32 = caps.get(1).unwrap().as_str().parse().unwrap_or(1);
@@ -454,11 +519,15 @@ impl LilyPondParser {
 
     fn parse_drums_from_section(&self, section: &str) -> Result<Vec<DrumEvent>, String> {
         let mut events = Vec::new();
-        let tokens = self.tokenize(section);
+        let section = self.mark_comments(section);
+        let tokens = self.tokenize(&section);
         let repeat_start_re = regex::Regex::new(r"^__REPEAT_START_(\d+)__$").unwrap();
+        let comment_re = regex::Regex::new(r"^__COMMENT_(.+)__$").unwrap();
 
         for token in tokens {
-            if token.starts_with('|') {
+            if let Some(caps) = comment_re.captures(&token) {
+                events.push(DrumEvent::Comment(caps.get(1).unwrap().as_str().replace('\x01', " ")));
+            } else if token.starts_with('|') {
                 events.push(DrumEvent::BarLine);
             } else if let Some(caps) = repeat_start_re.captures(&token) {
                 let count: u32 = caps.get(1).unwrap().as_str().parse().unwrap_or(1);
@@ -637,6 +706,7 @@ impl LilyPondParser {
             "tomh" => "ht".to_string(),    // high tom
             "tomm" => "mt".to_string(),    // mid tom
             "toml" => "lt".to_string(),    // low tom
+            "ss" => "rim".to_string(),     // side stick
             _ => name.to_string(),         // keep as-is (bd, hh, etc.)
         }
     }
@@ -682,13 +752,29 @@ impl LilyPondParser {
     }
 
     fn parse_tempo(&self, code: &str) -> Option<Tempo> {
+        // Try literal: \tempo 4 = 120
         let re = regex::Regex::new(r"\\tempo\s+(\d+)\s*=\s*(\d+)").ok()?;
-
         if let Some(caps) = re.captures(code) {
             let beat_unit: u32 = caps.get(1)?.as_str().parse().ok()?;
             let bpm: u32 = caps.get(2)?.as_str().parse().ok()?;
             return Some(Tempo { beat_unit, bpm });
         }
+
+        // Try variable reference: \tempo 4 = \varname where varname = 120
+        let var_re = regex::Regex::new(r"\\tempo\s+(\d+)\s*=\s*\\([a-zA-Z_][a-zA-Z0-9_]*)").ok()?;
+        if let Some(caps) = var_re.captures(code) {
+            let beat_unit: u32 = caps.get(1)?.as_str().parse().ok()?;
+            let var_name = caps.get(2)?.as_str();
+            // Look for simple scalar assignment: varname = <number>
+            let val_re = regex::Regex::new(
+                &format!(r"(?m)^{}\s*=\s*(\d+)", regex::escape(var_name))
+            ).ok()?;
+            if let Some(val_caps) = val_re.captures(code) {
+                let bpm: u32 = val_caps.get(1)?.as_str().parse().ok()?;
+                return Some(Tempo { beat_unit, bpm });
+            }
+        }
+
         None
     }
 
@@ -973,6 +1059,9 @@ impl StrudelGenerator {
                     *idx += 1;
                     break;
                 }
+                PitchedEvent::Comment(_) => {
+                    *idx += 1;
+                }
             }
         }
 
@@ -1014,6 +1103,9 @@ impl StrudelGenerator {
                 DrumEvent::RepeatEnd => {
                     *idx += 1;
                     break;
+                }
+                DrumEvent::Comment(_) => {
+                    *idx += 1;
                 }
             }
         }
@@ -1143,6 +1235,9 @@ impl StrudelGenerator {
                     *idx += 1;
                     break; // Exit this level of recursion
                 }
+                PitchedEvent::Comment(_) => {
+                    *idx += 1;
+                }
             }
         }
 
@@ -1152,7 +1247,7 @@ impl StrudelGenerator {
             bar_count += 1;
         }
 
-        (bars.join(" "), bar_count)
+        (bars.join("\n"), bar_count)
     }
 
     fn generate_pitched_pattern(events: &[PitchedEvent], idx: &mut usize) -> String {
@@ -1199,7 +1294,7 @@ impl StrudelGenerator {
         }
 
         let base = format!(
-            "note(\"{}\"){}\n  .s(\"piano\")",
+            "note(`\n{}`){}\n  .s(\"piano\")",
             pattern, modifiers
         );
 
@@ -1270,6 +1365,9 @@ impl StrudelGenerator {
                     *idx += 1;
                     break; // Exit this level of recursion
                 }
+                DrumEvent::Comment(_) => {
+                    *idx += 1;
+                }
             }
         }
 
@@ -1279,7 +1377,7 @@ impl StrudelGenerator {
             bar_count += 1;
         }
 
-        (bars.join(" "), bar_count)
+        (bars.join("\n"), bar_count)
     }
 
     fn generate_drum_pattern(events: &[DrumEvent], idx: &mut usize) -> String {
@@ -1312,7 +1410,7 @@ impl StrudelGenerator {
 
         let mut idx = 0;
         let pattern = Self::generate_drum_pattern(events, &mut idx);
-        let base = format!("sound(\"{}\")", pattern);
+        let base = format!("sound(`\n{}`)", pattern);
 
         // Build modifiers with newlines
         let mut modifiers = String::new();
@@ -1380,7 +1478,7 @@ impl StrudelGenerator {
                 let mut idx = 0;
                 let pattern = Self::generate_drum_pattern(&voice.events, &mut idx);
                 let modifiers = Self::format_voice_modifiers(&voice.punchcard_color, &voice.gain, &voice.pan);
-                format!("sound(\"{}\"){}", pattern, modifiers)
+                format!("sound(`\n{}`){}", pattern, modifiers)
             })
             .collect();
 

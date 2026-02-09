@@ -131,6 +131,67 @@ $: stack(
   .cpm(tempo/4/2)
 ```
 
+### Drum Name Mapping
+
+LilyPond drum names are mapped to Strudel sound names:
+
+| LilyPond | Strudel | Description |
+|----------|---------|-------------|
+| `sn`     | `sd`    | snare drum  |
+| `ss`     | `rim`   | side stick  |
+| `hhc`    | `hh`    | closed hi-hat |
+| `hho`    | `oh`    | open hi-hat |
+| `cymc`   | `cr`    | crash cymbal |
+| `cymr`   | `rd`    | ride cymbal |
+| `tomh`   | `ht`    | high tom    |
+| `tomm`   | `mt`    | mid tom     |
+| `toml`   | `lt`    | low tom     |
+
+Other drum names (`bd`, `hh`, `cp`, `cb`, etc.) are passed through as-is.
+
+### Bar Sequencer
+
+A separate binary generates LilyPond and Strudel files from YAML sequence definitions that reference a pattern library.
+
+```bash
+strudel-of-lilypond-sequence seq1.yml --library demo
+```
+
+**Sequence file** (`seq1.yml`):
+```yaml
+tempo: 120
+sequence:
+  - description: "intro tick"
+    item: !Single
+      pattern_name: "library/count"
+  - description: "repeat kick and snare"
+    item: !RepeatBar
+      - 4
+      - pattern_name: "library/pattern1"
+  - description: "two kick only bars"
+    item: !Group
+      - !Single
+        pattern_name: "library/pattern2"
+      - !Single
+        pattern_name: "library/pattern2"
+```
+
+**Pattern file** (`library/pattern1.yml`):
+```yaml
+description: kick and snare
+voices:
+  - bd4 sn4 bd4 sn4
+  - hh8 hh8 hh8 hh8 hh8 hh8 hh8 hh8
+```
+
+Sequence items support:
+- `!Single` - a single bar from a pattern
+- `!RepeatBar` - repeat a pattern N times (`\repeat volta N` in LilyPond, `!N` in Strudel)
+- `!Group` - a group of bars played in sequence
+- `!RepeatGroup` - repeat a group of bars N times
+
+Each pattern can have a variable number of voices, which map to `\new DrumVoice` blocks in LilyPond (`\voiceOne`, `\voiceTwo`, etc.).
+
 ### Output Format
 
 - Each bar is wrapped in `[...]` brackets
