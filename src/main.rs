@@ -64,7 +64,7 @@ fn main() {
                 result.staves.len(), pitched_count, drum_count
             );
             eprintln!("Tempo: {} = {} BPM", result.tempo.beat_unit, result.tempo.bpm);
-            let html: String = StrudelGenerator::generate_html(&result.staves, Some(&result.tempo), stem);
+            let html: String = StrudelGenerator::generate_html(&result.staves, &result.tempo, stem);
 
             match fs::write(&output_path, &html) {
                 Ok(_) => println!("{output_path}"),

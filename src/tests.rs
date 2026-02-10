@@ -1,5 +1,7 @@
 use crate::*;
 
+const DEFAULT_TEMPO: Tempo = Tempo { beat_unit: 4, bpm: 120 };
+
 #[test]
 fn test_parse_simple_notes() {
     let parser = LilyPondParser::new();
@@ -65,7 +67,7 @@ fn test_generate_strudel() {
         },
     ];
 
-    let strudel = StrudelGenerator::generate(&notes, None);
+    let strudel = StrudelGenerator::generate(&notes, &DEFAULT_TEMPO);
     assert!(strudel.contains("c4"));
 }
 
@@ -94,26 +96,9 @@ fn test_generate_with_tempo() {
     ];
     let tempo = Tempo { beat_unit: 4, bpm: 120 };
 
-    let strudel = StrudelGenerator::generate(&notes, Some(&tempo));
+    let strudel = StrudelGenerator::generate(&notes, &tempo);
     // 1 note = 1 bar, so cpm is tempo/4/1
-    assert!(strudel.contains(".cpm(tempo/4/1)"));
-}
-
-#[test]
-fn test_generate_without_tempo() {
-    let notes = vec![
-        Note {
-            name: 'c',
-            octave: 4,
-            accidental: None,
-            duration: 4,
-            midi: 60,
-            chord_notes: None,
-        },
-    ];
-
-    let strudel = StrudelGenerator::generate(&notes, None);
-    assert!(!strudel.contains(".cpm"));
+    assert!(strudel.contains(".cpm(tempo/4/nbars)"));
 }
 
 #[test]
@@ -132,7 +117,7 @@ fn test_repeat_structure() {
     // Check that the generated output uses !3 syntax for repeats
     // Notes without bar line are in the same bar: [c4 d4]
     let events = result.staves[0].events().unwrap();
-    let strudel = StrudelGenerator::generate_pitched_staff(events, None);
+    let strudel = StrudelGenerator::generate_pitched_staff(events, &DEFAULT_TEMPO);
     assert!(strudel.contains("[[c4 d4]]!3"));
 }
 
@@ -148,7 +133,7 @@ fn test_nested_repeat() {
 
     // Check nested repeat syntax with ! notation
     let events = result.staves[0].events().unwrap();
-    let strudel = StrudelGenerator::generate_pitched_staff(events, None);
+    let strudel = StrudelGenerator::generate_pitched_staff(events, &DEFAULT_TEMPO);
     assert!(strudel.contains("[[[c4]]!2]!2"));
 }
 
@@ -207,7 +192,7 @@ fn test_generate_multi_staff() {
         })]),
     ];
 
-    let strudel = StrudelGenerator::generate_multi(&staves, None);
+    let strudel = StrudelGenerator::generate_multi(&staves, &DEFAULT_TEMPO);
     assert!(strudel.contains("$: note(`\n[c4]`)"));
     assert!(strudel.contains("$: note(`\n[e4]`)"));
 }
@@ -253,7 +238,7 @@ fn test_generate_drum_staff() {
         pan: None,
     }];
 
-    let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
+    let strudel = StrudelGenerator::generate_drum_staff(&voices, &DEFAULT_TEMPO);
     assert!(strudel.contains("sound(`\n[bd hh]`)"));
 }
 
@@ -310,7 +295,7 @@ fn test_generate_multi_voice_drum_staff() {
         },
     ];
 
-    let strudel = StrudelGenerator::generate_drum_staff(&voices, None);
+    let strudel = StrudelGenerator::generate_drum_staff(&voices, &DEFAULT_TEMPO);
     assert!(strudel.contains("stack("));
     assert!(strudel.contains("sound(`\n[bd]`)"));
     assert!(strudel.contains("sound(`\n[hh@0.5]`)"));
@@ -357,7 +342,7 @@ fn test_generate_mixed_staves() {
         }]),
     ];
 
-    let strudel = StrudelGenerator::generate_multi(&staves, None);
+    let strudel = StrudelGenerator::generate_multi(&staves, &DEFAULT_TEMPO);
     assert!(strudel.contains("$: note(`\n[c4]`)"));
     assert!(strudel.contains("$: sound(`\n[bd]`)"));
 }
@@ -415,7 +400,7 @@ fn test_generate_chord() {
         },
     ];
 
-    let strudel = StrudelGenerator::generate(&notes, None);
+    let strudel = StrudelGenerator::generate(&notes, &DEFAULT_TEMPO);
     assert!(strudel.contains("[a4,c4,e4]"));
 }
 
@@ -432,7 +417,7 @@ fn test_bar_line_parsed() {
     assert_eq!(events.len(), 5);
     assert!(matches!(events[2], PitchedEvent::BarLine));
 
-    let strudel = StrudelGenerator::generate_pitched_staff(events, None);
+    let strudel = StrudelGenerator::generate_pitched_staff(events, &DEFAULT_TEMPO);
     // Bar lines create separate bars in brackets
     assert!(strudel.contains("[c4 d4]\n[e4 f4]"));
 }
@@ -458,7 +443,7 @@ voice = { c'4 d'4 }
     assert_eq!(result.staves.len(), 1);
     assert_eq!(result.staves[0].pan, Some("0.25".to_string()));
 
-    let strudel = StrudelGenerator::generate_staff(&result.staves[0], None);
+    let strudel = StrudelGenerator::generate_staff(&result.staves[0], &DEFAULT_TEMPO);
     assert!(strudel.contains(".pan(0.25)"));
 }
 
@@ -483,7 +468,7 @@ voice = { c'4 d'4 }
     assert_eq!(result.staves.len(), 1);
     assert_eq!(result.staves[0].pan, Some("<0 .5 1>".to_string()));
 
-    let strudel = StrudelGenerator::generate_staff(&result.staves[0], None);
+    let strudel = StrudelGenerator::generate_staff(&result.staves[0], &DEFAULT_TEMPO);
     // Patterns should be wrapped in quotes
     assert!(strudel.contains(".pan(\"<0 .5 1>\")"));
 }
@@ -509,7 +494,7 @@ voice = { c'4 d'4 }
     assert_eq!(result.staves.len(), 1);
     assert_eq!(result.staves[0].gain, Some("<0.5 1 1.5>".to_string()));
 
-    let strudel = StrudelGenerator::generate_staff(&result.staves[0], None);
+    let strudel = StrudelGenerator::generate_staff(&result.staves[0], &DEFAULT_TEMPO);
     // Patterns should be wrapped in quotes
     assert!(strudel.contains(".gain(\"<0.5 1 1.5>\")"));
 }
