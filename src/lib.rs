@@ -1118,9 +1118,9 @@ impl StrudelGenerator {
         bars
     }
 
-    /// Generate CPM expression as tempo/4/bars
-    fn format_cpm_expression(bars: u32) -> String {
-        format!("tempo/4/{}", bars)
+    /// Generate CPM expression using the nbars constant
+    fn format_cpm_expression(_bars: u32) -> String {
+        "tempo/4/nbars".to_string()
     }
 
     fn format_note(n: &Note) -> String {
@@ -1254,13 +1254,13 @@ impl StrudelGenerator {
         Self::generate_pitched_pattern_with_bars(events, idx).0
     }
 
-    pub fn generate_pitched_staff(events: &[PitchedEvent], tempo: Option<&Tempo>) -> String {
+    pub fn generate_pitched_staff(events: &[PitchedEvent], tempo: &Tempo) -> String {
         Self::generate_pitched_staff_with_options(events, tempo, &None, &None, &None)
     }
 
     fn generate_pitched_staff_with_options(
         events: &[PitchedEvent],
-        tempo: Option<&Tempo>,
+        _tempo: &Tempo,
         punchcard_color: &Option<String>,
         gain: &Option<String>,
         pan: &Option<String>,
@@ -1298,14 +1298,10 @@ impl StrudelGenerator {
             pattern, modifiers
         );
 
-        if tempo.is_some() {
-            let mut bar_idx = 0;
-            let bars = Self::count_pitched_bars(events, &mut bar_idx);
-            if bars > 0 {
-                format!("{base}\n  .cpm({})", Self::format_cpm_expression(bars))
-            } else {
-                base
-            }
+        let mut bar_idx = 0;
+        let bars = Self::count_pitched_bars(events, &mut bar_idx);
+        if bars > 0 {
+            format!("{base}\n  .cpm({})", Self::format_cpm_expression(bars))
         } else {
             base
         }
@@ -1385,13 +1381,13 @@ impl StrudelGenerator {
     }
 
     #[allow(dead_code)]
-    fn generate_single_drum_voice(events: &[DrumEvent], tempo: Option<&Tempo>) -> String {
+    fn generate_single_drum_voice(events: &[DrumEvent], tempo: &Tempo) -> String {
         Self::generate_single_drum_voice_with_options(events, tempo, &None, &None, &None)
     }
 
     fn generate_single_drum_voice_with_options(
         events: &[DrumEvent],
-        tempo: Option<&Tempo>,
+        _tempo: &Tempo,
         punchcard_color: &Option<String>,
         gain: &Option<String>,
         pan: &Option<String>,
@@ -1427,14 +1423,10 @@ impl StrudelGenerator {
 
         let with_modifiers = format!("{}{}", base, modifiers);
 
-        if tempo.is_some() {
-            let mut bar_idx = 0;
-            let bars = Self::count_drum_bars(events, &mut bar_idx);
-            if bars > 0 {
-                format!("{with_modifiers}\n  .cpm({})", Self::format_cpm_expression(bars))
-            } else {
-                with_modifiers
-            }
+        let mut bar_idx = 0;
+        let bars = Self::count_drum_bars(events, &mut bar_idx);
+        if bars > 0 {
+            format!("{with_modifiers}\n  .cpm({})", Self::format_cpm_expression(bars))
         } else {
             with_modifiers
         }
@@ -1455,7 +1447,7 @@ impl StrudelGenerator {
         modifiers
     }
 
-    pub fn generate_drum_staff(voices: &[DrumVoiceData], tempo: Option<&Tempo>) -> String {
+    pub fn generate_drum_staff(voices: &[DrumVoiceData], tempo: &Tempo) -> String {
         if voices.is_empty() {
             return String::from("// No drum hits to convert");
         }
@@ -1484,28 +1476,24 @@ impl StrudelGenerator {
 
         let stacked = format!("stack(\n  {},\n)", voice_patterns.join(",\n  "));
 
-        if tempo.is_some() {
-            // Use the longest voice to calculate bars
-            let max_bars: u32 = voices
-                .iter()
-                .map(|voice| {
-                    let mut idx = 0;
-                    Self::count_drum_bars(&voice.events, &mut idx)
-                })
-                .max()
-                .unwrap_or(0);
+        // Use the longest voice to calculate bars
+        let max_bars: u32 = voices
+            .iter()
+            .map(|voice| {
+                let mut idx = 0;
+                Self::count_drum_bars(&voice.events, &mut idx)
+            })
+            .max()
+            .unwrap_or(0);
 
-            if max_bars > 0 {
-                format!("{stacked}\n  .cpm({})", Self::format_cpm_expression(max_bars))
-            } else {
-                stacked
-            }
+        if max_bars > 0 {
+            format!("{stacked}\n  .cpm({})", Self::format_cpm_expression(max_bars))
         } else {
             stacked
         }
     }
 
-    pub fn generate_staff(staff: &Staff, tempo: Option<&Tempo>) -> String {
+    pub fn generate_staff(staff: &Staff, tempo: &Tempo) -> String {
         match &staff.content {
             StaffContent::Notes(events) => {
                 Self::generate_pitched_staff_with_options(events, tempo, &staff.punchcard_color, &staff.gain, &staff.pan)
@@ -1515,13 +1503,13 @@ impl StrudelGenerator {
     }
 
     /// Generate Strudel code for a single staff (backwards compatibility)
-    pub fn generate(notes: &[Note], tempo: Option<&Tempo>) -> String {
+    pub fn generate(notes: &[Note], tempo: &Tempo) -> String {
         let events: Vec<PitchedEvent> = notes.iter().cloned().map(PitchedEvent::Note).collect();
         Self::generate_pitched_staff(&events, tempo)
     }
 
     /// Generate Strudel code for multiple staves
-    pub fn generate_multi(staves: &[Staff], tempo: Option<&Tempo>) -> String {
+    pub fn generate_multi(staves: &[Staff], tempo: &Tempo) -> String {
         if staves.is_empty() {
             return String::from("// No staves to convert");
         }
@@ -1533,11 +1521,31 @@ impl StrudelGenerator {
             .join("\n\n")
     }
 
-    pub fn generate_html(staves: &[Staff], tempo: Option<&Tempo>, title: &str) -> String {
+    fn count_staff_bars(staff: &Staff) -> u32 {
+        match &staff.content {
+            StaffContent::Notes(events) => {
+                let mut idx = 0;
+                Self::count_pitched_bars(events, &mut idx)
+            }
+            StaffContent::Drums(voices) => {
+                voices.iter()
+                    .map(|voice| {
+                        let mut idx = 0;
+                        Self::count_drum_bars(&voice.events, &mut idx)
+                    })
+                    .max()
+                    .unwrap_or(0)
+            }
+        }
+    }
+
+    pub fn generate_html(staves: &[Staff], tempo: &Tempo, title: &str) -> String {
         let pattern = Self::generate_multi(staves, tempo);
-        let tempo_const = tempo
-            .map(|t| format!("const tempo = {};", t.bpm))
-            .unwrap_or_else(|| "const tempo = 120;".to_string());
+        let tempo_const = format!("const tempo = {};", tempo.bpm);
+        let nbars: u32 = staves.iter()
+            .map(|s| Self::count_staff_bars(s))
+            .max()
+            .unwrap_or(0);
         format!(
             r#"<!DOCTYPE html>
 <html>
@@ -1555,6 +1563,7 @@ impl StrudelGenerator {
   <strudel-repl>
 <!--
 {tempo_const}
+const nbars = {nbars};
 
 {pattern}
 -->

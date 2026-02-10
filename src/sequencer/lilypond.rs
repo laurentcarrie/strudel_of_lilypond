@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::model::{Pattern, Bar, EBarSequence, BarSequence};
+use crate::{LilyPondParser, StrudelGenerator};
 
 pub fn lilypond_bar_of_snippet(patterns: &[Pattern]) -> String {
     patterns
@@ -181,6 +182,14 @@ pub fn lilypond_of_sequence(bar_sequence: &BarSequence, libraries: &[PathBuf], _
         tempo = bar_sequence.tempo,
         voices = voices,
     ))
+}
+
+pub fn strudel_of_sequence(bar_sequence: &BarSequence, libraries: &[PathBuf], title: &str) -> Result<String, String> {
+    let dummy_dir = Path::new(".");
+    let ly = lilypond_of_sequence(bar_sequence, libraries, dummy_dir)?;
+    let parser = LilyPondParser::new();
+    let result = parser.parse(&ly).map_err(|e| format!("LilyPond parse error: {e}"))?;
+    Ok(StrudelGenerator::generate_html(&result.staves, &result.tempo, title))
 }
 
 #[cfg(test)]

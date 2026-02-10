@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.1] - 2026-02-09
+
+### Added
+- `strudel_of_sequence` function for in-memory HTML generation (no disk I/O)
+- `const nbars` in generated HTML, used in `.cpm(tempo/4/nbars)`
+- `upload-library.sh` script for S3 pattern library sync
+
+### Changed
+- Tempo is now required (`&Tempo`) instead of `Option<&Tempo>` in all generator functions
+- Simplified `sequence.rs` binary to use `strudel_of_sequence`
+- Sequencer model structs derive `Serialize`
+
 ## [0.4.0] - 2026-02-09
 
 ### Added
